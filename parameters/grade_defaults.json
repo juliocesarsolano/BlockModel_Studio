@@ -1,0 +1,182 @@
+{
+  "grade_units": [
+    "g/t",
+    "ppm",
+    "%",
+    "other"
+  ],
+  "grade_candidates": [
+    "AU",
+    "AU_PPM",
+    "AU_GT",
+    "Au",
+    "au",
+    "au_ppm",
+    "au_gt",
+    "AG",
+    "AG_PPM",
+    "AG_GT",
+    "Ag",
+    "ag",
+    "ag_ppm",
+    "ag_gt",
+    "CU_PCT",
+    "ZN_PCT",
+    "PB_PCT",
+    "C_PCT",
+    "OC_PCT",
+    "S_PCT",
+    "S2_PCT",
+    "AS_PPM",
+    "SB_PPM",
+    "TE_PPM",
+    "AU_LTP",
+    "AG_LTP",
+    "CU_LTP",
+    "S_LTP",
+    "C_LTP",
+    "OC_LTP",
+    "S2_LTP",
+    "AULTP",
+    "AGLTP",
+    "CULTP",
+    "SLTP",
+    "CLTP",
+    "OCLTP",
+    "S2LTP",
+    "STOT",
+    "STOT_LTP",
+    "CTOT",
+    "CTOT_LTP"
+  ],
+  "default_labels": {
+    "AU": "Au",
+    "AU_PPM": "Au",
+    "AU_GT": "Au",
+    "AG": "Ag",
+    "AG_PPM": "Ag",
+    "AG_GT": "Ag",
+    "CU_PCT": "Cu",
+    "ZN_PCT": "Zn",
+    "PB_PCT": "Pb",
+    "C_PCT": "C",
+    "OC_PCT": "OC",
+    "S_PCT": "S",
+    "S2_PCT": "S2",
+    "AS_PPM": "As",
+    "SB_PPM": "Sb",
+    "TE_PPM": "Te",
+    "AU_LTP": "Au",
+    "AG_LTP": "Ag",
+    "CU_LTP": "Cu",
+    "S_LTP": "S",
+    "C_LTP": "C",
+    "OC_LTP": "OC",
+    "S2_LTP": "S2",
+    "AULTP": "Au",
+    "AGLTP": "Ag",
+    "CULTP": "Cu",
+    "SLTP": "S",
+    "CLTP": "C",
+    "OCLTP": "OC",
+    "S2LTP": "S2",
+    "STOT": "S",
+    "STOT_LTP": "S",
+    "CTOT": "C",
+    "CTOT_LTP": "C"
+  },
+  "unit_rules": [
+    {
+      "contains": "pct",
+      "unit": "%"
+    },
+    {
+      "contains": "_pct",
+      "unit": "%"
+    },
+    {
+      "contains": "%",
+      "unit": "%"
+    },
+    {
+      "contains": "ppm",
+      "unit": "ppm"
+    },
+    {
+      "contains": "gpt",
+      "unit": "g/t"
+    },
+    {
+      "contains": "gt",
+      "unit": "g/t"
+    }
+  ],
+  "canonical_labels": {
+    "Au": [
+      "AU",
+      "AU_PPM",
+      "AU_GT",
+      "AU_LTP",
+      "AULTP"
+    ],
+    "Ag": [
+      "AG",
+      "AG_PPM",
+      "AG_GT",
+      "AG_LTP",
+      "AGLTP"
+    ],
+    "Cu": [
+      "CU",
+      "CU_PCT",
+      "CU_LTP",
+      "CULTP"
+    ],
+    "C": [
+      "C",
+      "C_PCT",
+      "C_LTP",
+      "CLTP",
+      "CTOT",
+      "CTOT_LTP"
+    ],
+    "OC": [
+      "OC",
+      "OC_PCT",
+      "OC_LTP",
+      "OCLTP"
+    ],
+    "S": [
+      "S",
+      "S_PCT",
+      "S_LTP",
+      "SLTP",
+      "STOT",
+      "STOT_LTP"
+    ],
+    "S2": [
+      "S2",
+      "S2_PCT",
+      "S2_LTP",
+      "S2LTP"
+    ]
+  },
+  "resource_table_display_order": [
+    "Au",
+    "Ag",
+    "Cu",
+    "C",
+    "OC",
+    "S",
+    "S2"
+  ],
+  "resource_table_unit_overrides": {
+    "Au": "g/t",
+    "Ag": "g/t",
+    "Cu": "%",
+    "C": "%",
+    "OC": "%",
+    "S": "%",
+    "S2": "%"
+  }
+}

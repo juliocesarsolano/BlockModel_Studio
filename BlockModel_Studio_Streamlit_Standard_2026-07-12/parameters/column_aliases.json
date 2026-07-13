@@ -1,0 +1,146 @@
+{
+  "mass_column_aliases": [
+    "TONNES",
+    "TONS",
+    "TOTAL_TONNES",
+    "TOTAL_MASS",
+    "MASS",
+    "TONNAGE",
+    "Tonnes",
+    "tonnes"
+  ],
+  "volume_column_aliases": [
+    "VOLUME",
+    "TOTAL_VOLUME",
+    "TOTAL VOLUME",
+    "TOTAL_VOLUMEN",
+    "VOLUMEN",
+    "Volume",
+    "volume"
+  ],
+  "category_priority": [
+    "CATEG",
+    "CATEGORY",
+    "RESOURCE_CLASS",
+    "CLASS",
+    "CATEG_GC",
+    "DESTINATION",
+    "DEST",
+    "DESTINATION_LTP",
+    "BENCH",
+    "RL",
+    "ELEVATION",
+    "METTYPE",
+    "MET_TYPE",
+    "ORETYPE",
+    "ORE_TYPE",
+    "YEAR",
+    "PERIOD",
+    "PHASE",
+    "PIT_NAME",
+    "PIT NAME",
+    "PIT",
+    "BLK_MODEL",
+    "BLOCK_MODEL",
+    "BLOCK MODEL",
+    "BM_TYPE",
+    "SOURCE",
+    "LITHO",
+    "LITHOLOGY",
+    "WEATHERING",
+    "WEATH"
+  ],
+  "role_keywords": [
+    {
+      "role": "Block Model",
+      "tokens": [
+        "blk_model",
+        "block_model",
+        "block model",
+        "bm_type",
+        "model flag"
+      ]
+    },
+    {
+      "role": "Destination",
+      "tokens": [
+        "destination",
+        "dest"
+      ]
+    },
+    {
+      "role": "Bench",
+      "tokens": [
+        "bench",
+        "rl",
+        "elevation"
+      ]
+    },
+    {
+      "role": "Year",
+      "tokens": [
+        "year",
+        "period"
+      ]
+    },
+    {
+      "role": "Phase",
+      "tokens": [
+        "phase"
+      ]
+    },
+    {
+      "role": "Pit",
+      "tokens": [
+        "pit name",
+        "pit_name",
+        "pit"
+      ]
+    },
+    {
+      "role": "Source",
+      "tokens": [
+        "source"
+      ]
+    },
+    {
+      "role": "Mettype",
+      "tokens": [
+        "mettype",
+        "met type",
+        "oretype",
+        "ore type"
+      ]
+    },
+    {
+      "role": "Lithology",
+      "tokens": [
+        "lith",
+        "lithology"
+      ]
+    },
+    {
+      "role": "Alteration",
+      "tokens": [
+        "alter",
+        "alteration"
+      ]
+    },
+    {
+      "role": "Weathering",
+      "tokens": [
+        "weath",
+        "weathering"
+      ]
+    },
+    {
+      "role": "Category",
+      "tokens": [
+        "categ",
+        "category",
+        "class",
+        "resource class"
+      ]
+    }
+  ]
+}

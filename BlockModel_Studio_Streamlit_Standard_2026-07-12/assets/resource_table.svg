@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 220">
+  <rect width="360" height="220" rx="24" fill="#F1F6F9"/>
+  <rect x="40" y="42" width="280" height="136" rx="10" fill="#fff" stroke="#D9E2EC" stroke-width="2"/>
+  <rect x="40" y="42" width="280" height="34" rx="10" fill="#005A87"/>
+  <line x1="60" y1="96" x2="300" y2="96" stroke="#D9E2EC" stroke-width="4"/>
+  <line x1="60" y1="122" x2="300" y2="122" stroke="#D9E2EC" stroke-width="4"/>
+  <line x1="60" y1="148" x2="300" y2="148" stroke="#D9E2EC" stroke-width="4"/>
+  <text x="58" y="66" font-family="Arial" font-size="15" font-weight="700" fill="#fff">Category</text>
+  <text x="220" y="66" font-family="Arial" font-size="15" font-weight="700" fill="#fff">Au oz</text>
+  <text x="28" y="202" font-family="Arial" font-size="18" font-weight="700" fill="#03547C">Resource Evaluation</text>
+</svg>
