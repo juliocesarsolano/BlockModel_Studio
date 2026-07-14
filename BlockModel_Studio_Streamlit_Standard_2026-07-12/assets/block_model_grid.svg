@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 220">
-  <rect width="360" height="220" rx="24" fill="#F1F6F9"/>
-  <g transform="translate(58 40) skewY(-15)">
-    <rect x="0" y="0" width="46" height="38" fill="#03547C"/><rect x="50" y="0" width="46" height="38" fill="#00843D"/><rect x="100" y="0" width="46" height="38" fill="#808080"/><rect x="150" y="0" width="46" height="38" fill="#FF0000"/>
-    <rect x="25" y="42" width="46" height="38" fill="#00843D"/><rect x="75" y="42" width="46" height="38" fill="#03547C"/><rect x="125" y="42" width="46" height="38" fill="#0000FF"/><rect x="175" y="42" width="46" height="38" fill="#A39161"/>
-    <rect x="50" y="84" width="46" height="38" fill="#ED7D31"/><rect x="100" y="84" width="46" height="38" fill="#70AD47"/><rect x="150" y="84" width="46" height="38" fill="#5B9BD5"/>
-  </g>
-  <text x="28" y="190" font-family="Arial" font-size="18" font-weight="700" fill="#03547C">Models Comparison</text>
-</svg>
