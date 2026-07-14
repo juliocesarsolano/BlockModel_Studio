@@ -17,6 +17,7 @@ from src.ui.common import (  # noqa: E402
     sidebar_brand,
 )
 from src.ui.pages import (  # noqa: E402
+    render_about,
     render_comparison,
     render_evaluation,
     render_home,
@@ -45,6 +46,7 @@ PAGES = {
     "Model Evaluation": render_evaluation,
     "Model Comparison": render_comparison,
     "Report Builder": render_reports,
+    "About": render_about,
 }
 
 selected_page = st.sidebar.radio(

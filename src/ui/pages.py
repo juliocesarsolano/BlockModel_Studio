@@ -6151,3 +6151,235 @@ def render_reports() -> None:
         st.markdown("The Excel file contains the principal evaluation/comparison result tables and their footnotes. The PDF contains those tables plus all charts from the corresponding evaluation and comparison sections.")
         if charts:
             st.markdown("**Charts included:** " + ", ".join(chart["title"] for chart in charts))
+
+
+def render_about() -> None:
+    """Render the application information, authorship and technical-use notice."""
+    page_header(
+        "About",
+        "Application information, technical scope, authorship and responsible-use notice.",
+    )
+
+    st.markdown(
+        """
+        <style>
+        .bm-about-hero {
+            display: grid;
+            grid-template-columns: minmax(0, 1.8fr) minmax(230px, 0.7fr);
+            gap: 1.2rem;
+            padding: 1.45rem;
+            margin: 0.35rem 0 1.25rem 0;
+            border: 1px solid rgba(0, 84, 124, 0.16);
+            border-radius: 14px;
+            background:
+                linear-gradient(135deg, rgba(0, 84, 124, 0.10), rgba(163, 145, 97, 0.08)),
+                #FFFFFF;
+            box-shadow: 0 10px 28px rgba(0, 45, 67, 0.07);
+        }
+        .bm-about-kicker {
+            color: #A39161;
+            font-size: 0.76rem;
+            font-weight: 800;
+            letter-spacing: 0.13em;
+            text-transform: uppercase;
+            margin-bottom: 0.35rem;
+        }
+        .bm-about-title {
+            color: #004967;
+            font-size: clamp(1.85rem, 3vw, 2.7rem);
+            line-height: 1.05;
+            font-weight: 800;
+            margin-bottom: 0.65rem;
+        }
+        .bm-about-copy {
+            color: #405563;
+            font-size: 1rem;
+            line-height: 1.62;
+            max-width: 850px;
+        }
+        .bm-about-meta {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 0.7rem;
+            padding: 1rem;
+            border-left: 3px solid #A39161;
+            background: rgba(255, 255, 255, 0.72);
+        }
+        .bm-about-meta-label {
+            color: #637083;
+            font-size: 0.72rem;
+            font-weight: 750;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        .bm-about-meta-value {
+            color: #1F2D36;
+            font-size: 0.98rem;
+            font-weight: 700;
+            margin-top: 0.1rem;
+        }
+        .bm-about-card {
+            height: 100%;
+            padding: 1.1rem 1.15rem;
+            border: 1px solid #D9E2EC;
+            border-radius: 12px;
+            background: #FFFFFF;
+        }
+        .bm-about-card h4 {
+            color: #004967;
+            margin: 0 0 0.6rem 0;
+        }
+        .bm-about-card p,
+        .bm-about-card li {
+            color: #465B68;
+            line-height: 1.55;
+        }
+        .bm-about-notice {
+            margin-top: 1rem;
+            padding: 1rem 1.15rem;
+            border-left: 5px solid #A39161;
+            background: #F8F6EF;
+            color: #3D4D57;
+            line-height: 1.55;
+        }
+        .bm-about-footer {
+            margin: 1.4rem 0 0.3rem 0;
+            padding-top: 0.9rem;
+            border-top: 1px solid #D9E2EC;
+            color: #637083;
+            font-size: 0.82rem;
+            text-align: center;
+        }
+        @media (max-width: 760px) {
+            .bm-about-hero {
+                grid-template-columns: 1fr;
+            }
+            .bm-about-meta {
+                border-left: none;
+                border-top: 3px solid #A39161;
+            }
+        }
+        </style>
+
+        <section class="bm-about-hero">
+            <div>
+                <div class="bm-about-kicker">Mineral Resource Management</div>
+                <div class="bm-about-title">PV BlockModel Studio</div>
+                <div class="bm-about-copy">
+                    A Streamlit-based analytical application designed to support block-model
+                    validation, mineral-resource tabulation, model comparison and governed
+                    reporting for pits and stockpiles.
+                </div>
+            </div>
+            <div class="bm-about-meta">
+                <div>
+                    <div class="bm-about-meta-label">Developed by</div>
+                    <div class="bm-about-meta-value">Julio Solano (2026)</div>
+                </div>
+                <div>
+                    <div class="bm-about-meta-label">Application version</div>
+                    <div class="bm-about-meta-value">Version 1.0</div>
+                </div>
+                <div>
+                    <div class="bm-about-meta-label">Platform</div>
+                    <div class="bm-about-meta-value">Python · Streamlit</div>
+                </div>
+            </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown(
+            """
+            <div class="bm-about-card">
+                <h4>Purpose and capabilities</h4>
+                <ul>
+                    <li>Individual block-model evaluation and validation.</li>
+                    <li>Comparison of multiple models with a mandatory global-volume check.</li>
+                    <li>Resource tabulation by category and destination.</li>
+                    <li>Transversal filtering by model type, year, phase and destination.</li>
+                    <li>Weighted-grade and contained-metal calculations.</li>
+                    <li>Automated Excel and PDF reporting.</li>
+                </ul>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with col2:
+        st.markdown(
+            """
+            <div class="bm-about-card">
+                <h4>Author profile</h4>
+                <p><strong>Julio Solano</strong></p>
+                <p>
+                    Geological Engineer specializing in Mineral Resource Evaluation,
+                    Geostatistics, Data Science, Data Analytics, GIS and mining applications.
+                </p>
+                <p>
+                    Developed to strengthen repeatability, traceability and analytical
+                    consistency in block-model review workflows.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("### Technical methodology")
+    methodology = pd.DataFrame(
+        [
+            {
+                "Component": "Weighted grades",
+                "Method": "Grades are weighted by positive tonnage using Σ(grade × tonnes) / Σ(tonnes).",
+            },
+            {
+                "Component": "Au and Ag contained metal",
+                "Method": "For g/t or ppm variables, ounces are calculated as Σ(grade × tonnes) / 31.10348.",
+            },
+            {
+                "Component": "Percent variables",
+                "Method": "Percent grades are accumulated by tonnes and reported as a tonnage-weighted mean.",
+            },
+            {
+                "Component": "Model comparison",
+                "Method": "Global model volume is checked before analytical comparisons, subject to the configured tolerance.",
+            },
+            {
+                "Component": "Governance",
+                "Method": "Active filters, validation results and calculation context are retained in tables and exports where applicable.",
+            },
+        ]
+    )
+    st.dataframe(
+        _left_aligned_table_style(methodology),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Component": st.column_config.TextColumn(width="medium"),
+            "Method": st.column_config.TextColumn(width="large"),
+        },
+    )
+
+    st.markdown(
+        """
+        <div class="bm-about-notice">
+            <strong>Technical-use notice.</strong>
+            This application is an analytical decision-support tool. Its outputs do not replace
+            professional geological interpretation, formal quality assurance and quality control,
+            model sign-off, or review by an appropriately qualified mineral-resource professional.
+            Results must be independently verified before use in official Mineral Resource,
+            Mineral Reserve, planning or public-reporting processes.
+        </div>
+
+        <div class="bm-about-footer">
+            © 2026 Julio Solano. All rights reserved.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
