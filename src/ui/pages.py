@@ -141,7 +141,7 @@ def _page_header_chips(title: str) -> list[tuple[str, str]]:
     try:
         destination_label = _master_destination_label()  # type: ignore[name-defined]
     except Exception:
-        destination_label = st.session_state.get("master_destination_mode", DESTINATION_MODE_OPTIONS[0])
+        destination_label = st.session_state.get("master_destination_mode", DEFAULT_DESTINATION_MODE)
     if destination_label and title not in {"Model Setup"}:
         chips.append(("Destination", _format_header_chip_text(destination_label, 28)))
 
@@ -919,16 +919,17 @@ W_DESTINATIONS = {"w1", "w2"}
 VALID_DESTINATIONS = VALID_DESTINATIONS | MG_DESTINATIONS | MW_DESTINATIONS | W_DESTINATIONS
 
 DESTINATION_CUSTOM_MODE = "Custom combination"
+DEFAULT_DESTINATION_MODE = "Ore Reserve (HG+LG+MG)"
 DESTINATION_MODE_OPTIONS = [
+    DEFAULT_DESTINATION_MODE,
     "Ore Resource (HG+LG+MG+MW)",
-    "Ore Reserve (HG+LG+MG)",
     "Waste (W1+W2)",
     "Mineral Waste (MW1+MW2)",
     DESTINATION_CUSTOM_MODE,
 ]
 DESTINATION_MODE_CODES = {
+    DEFAULT_DESTINATION_MODE: HG_DESTINATIONS | LG_DESTINATIONS | MG_DESTINATIONS,
     "Ore Resource (HG+LG+MG+MW)": HG_DESTINATIONS | LG_DESTINATIONS | MG_DESTINATIONS | MW_DESTINATIONS,
-    "Ore Reserve (HG+LG+MG)": HG_DESTINATIONS | LG_DESTINATIONS | MG_DESTINATIONS,
     "Waste (W1+W2)": W_DESTINATIONS,
     "Mineral Waste (MW1+MW2)": MW_DESTINATIONS,
 }
@@ -1007,35 +1008,8 @@ def _time_roles_for_bundles(bundles: list[ModelBundle]) -> list[str]:
     return roles
 
 
-def _time_value_key(value: Any, role: str) -> str:
-    if pd.isna(value):
-        return ""
-    text = str(value).strip()
-    if not text:
-        return ""
-    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
-    if pd.notna(numeric) and float(numeric).is_integer():
-        return str(int(numeric))
-    return " ".join(text.split()).casefold()
-
-
-def _time_display_value(value: Any, role: str) -> Any:
-    key = _time_value_key(value, role)
-    if not key:
-        return ""
-    try:
-        return int(key)
-    except ValueError:
-        return " ".join(str(value).strip().split())
-
-
-def _time_sort_key(value: Any, role: str) -> tuple[Any, ...]:
-    key = _time_value_key(value, role)
-    try:
-        return (0, int(key))
-    except ValueError:
-        pass
-    month_order = {
+def _month_name_number(value: str) -> int | None:
+    month_numbers = {
         "jan": 1, "january": 1, "ene": 1, "enero": 1,
         "feb": 2, "february": 2, "febrero": 2,
         "mar": 3, "march": 3, "marzo": 3,
@@ -1044,15 +1018,98 @@ def _time_sort_key(value: Any, role: str) -> tuple[Any, ...]:
         "jun": 6, "june": 6, "junio": 6,
         "jul": 7, "july": 7, "julio": 7,
         "aug": 8, "august": 8, "ago": 8, "agosto": 8,
-        "sep": 9, "sept": 9, "september": 9, "septiembre": 9,
+        "sep": 9, "sept": 9, "september": 9, "set": 9, "setiembre": 9, "septiembre": 9,
         "oct": 10, "october": 10, "octubre": 10,
         "nov": 11, "november": 11, "noviembre": 11,
         "dec": 12, "december": 12, "dic": 12, "diciembre": 12,
     }
-    if role == "Month" and key in month_order:
-        return (1, month_order[key])
-    return (2, key)
+    return month_numbers.get(value.casefold().strip().rstrip("."))
 
+
+def _normalize_two_digit_year(year: int) -> int:
+    """Interpret two-digit planning years as 2000-2099 (for example, 26 -> 2026)."""
+    return 2000 + year if 0 <= year < 100 else year
+
+
+def _parse_month_year(value: Any) -> tuple[int, int] | None:
+    """Parse Month-Year labels such as Aug-26, Aug26, Agosto-2026 or Ago27."""
+    if pd.isna(value):
+        return None
+    text = str(value).strip().casefold()
+    if not text:
+        return None
+
+    compact = re.sub(r"[\s._/\-]+", "", text)
+    named = re.fullmatch(r"([a-záéíóúüñ]+)(\d{2}|\d{4})", compact)
+    if named:
+        month = _month_name_number(named.group(1))
+        if month:
+            return _normalize_two_digit_year(int(named.group(2))), month
+
+    numeric = re.fullmatch(r"(0?[1-9]|1[0-2])(\d{2}|\d{4})", compact)
+    if numeric:
+        return _normalize_two_digit_year(int(numeric.group(2))), int(numeric.group(1))
+
+    reverse = re.fullmatch(r"(\d{4})(0[1-9]|1[0-2])", compact)
+    if reverse:
+        return int(reverse.group(1)), int(reverse.group(2))
+    return None
+
+
+def _time_value_key(value: Any, role: str) -> str:
+    if pd.isna(value):
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+
+    if role == "Month":
+        month_year = _parse_month_year(value)
+        if month_year:
+            year, month = month_year
+            return f"{year:04d}-{month:02d}"
+
+        month = _month_name_number(text)
+        if month:
+            return f"month-{month:02d}"
+
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.notna(numeric) and float(numeric).is_integer():
+        integer = int(numeric)
+        if role == "Month" and 1 <= integer <= 12:
+            return f"month-{integer:02d}"
+        return str(integer)
+    return " ".join(text.split()).casefold()
+
+
+def _time_display_value(value: Any, role: str) -> Any:
+    key = _time_value_key(value, role)
+    if not key:
+        return ""
+    if role == "Month":
+        numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        if pd.notna(numeric) and float(numeric).is_integer():
+            return int(numeric)
+        return " ".join(str(value).strip().split())
+    try:
+        return int(key)
+    except ValueError:
+        return " ".join(str(value).strip().split())
+
+
+def _time_sort_key(value: Any, role: str) -> tuple[Any, ...]:
+    key = _time_value_key(value, role)
+    if role == "Month":
+        month_year = re.fullmatch(r"(\d{4})-(\d{2})", key)
+        if month_year:
+            return (0, int(month_year.group(1)), int(month_year.group(2)))
+        plain_month = re.fullmatch(r"month-(\d{2})", key)
+        if plain_month:
+            return (1, int(plain_month.group(1)))
+    try:
+        return (0, int(key))
+    except ValueError:
+        return (2, key)
 
 def _available_time_values_for_bundles(bundles: list[ModelBundle], role: str) -> list[Any]:
     values_by_key: dict[str, Any] = {}
@@ -1076,7 +1133,7 @@ def _years_from_master_scope(available_years: list[int]) -> list[int]:
     if mode == "Custom years":
         custom = st.session_state.get("master_custom_time_values", st.session_state.get("master_custom_years", available_years))
         selected_keys = {_time_value_key(value, "Year") for value in custom}
-        return [year for year in available_years if _time_value_key(year, "Year") in selected_keys] or available_years
+        return [year for year in available_years if _time_value_key(year, "Year") in selected_keys]
     if mode == "LOM":
         start_year, end_year = available_years[0], available_years[-1]
     elif mode == "Single year":
@@ -1094,6 +1151,8 @@ def _master_time_label() -> str:
     mode = str(st.session_state.get("master_time_scope", "LOM" if role == "Year" else "All months"))
     selected = st.session_state.get("master_selected_time_values", [])
     if not selected:
+        if mode in {"Custom years", "Custom months"}:
+            return f"No {role.casefold()}s selected"
         return f"All available {role.casefold()}s"
     if role == "Year":
         if mode == "Custom years":
@@ -1129,16 +1188,16 @@ def _render_master_year_filter_sidebar(bundles: list[ModelBundle], key_prefix: s
         unsafe_allow_html=True,
     )
 
+    role_widget_key = "master_time_role_widget"
     current_role = _active_time_role()
     if current_role not in time_roles:
         current_role = time_roles[0]
-    role_widget_key = f"{key_prefix}_master_time_role"
-    if st.session_state.get(role_widget_key) != current_role:
+    if role_widget_key not in st.session_state or st.session_state[role_widget_key] not in time_roles:
         st.session_state[role_widget_key] = current_role
+
     selected_role = st.sidebar.selectbox(
         "Time field",
         time_roles,
-        index=time_roles.index(current_role),
         key=role_widget_key,
         help="Choose Year or Month when both temporal fields are configured in the loaded model(s).",
     )
@@ -1152,104 +1211,149 @@ def _render_master_year_filter_sidebar(bundles: list[ModelBundle], key_prefix: s
     if selected_role == "Year":
         available_years = [int(value) for value in available_values]
         modes = ["LOM", "Single year", "2Y", "5Y", "10Y", "Custom years", "All years"]
+        scope_widget_key = "master_year_scope_widget"
         current_mode = str(st.session_state.get("master_time_scope", st.session_state.get("master_year_scope", "LOM")))
         if current_mode not in modes:
             current_mode = "LOM"
-        scope_widget_key = f"{key_prefix}_master_time_scope"
-        if st.session_state.get(scope_widget_key) != current_mode:
+        if scope_widget_key not in st.session_state or st.session_state[scope_widget_key] not in modes:
             st.session_state[scope_widget_key] = current_mode
+
         mode = st.sidebar.selectbox(
             "Year scope",
             modes,
-            index=modes.index(current_mode),
             key=scope_widget_key,
-            help=f"LOM uses the loaded data range: {available_years[0]}-{available_years[-1]}. This scope is applied across evaluation, comparison and reports.",
+            help=(
+                f"LOM uses the loaded data range: {available_years[0]}-{available_years[-1]}. "
+                "This scope is applied across evaluation, comparison and reports."
+            ),
         )
         st.session_state.master_time_scope = mode
         st.session_state.master_year_scope = mode
+
         if mode in {"Single year", "2Y", "5Y", "10Y"}:
-            current_start = int(st.session_state.get("master_time_start", st.session_state.get("master_year_start", available_years[0])))
+            start_widget_key = "master_year_start_widget"
+            current_start = int(
+                st.session_state.get(
+                    "master_time_start",
+                    st.session_state.get("master_year_start", available_years[0]),
+                )
+            )
             if current_start not in available_years:
                 current_start = available_years[0]
-            start_widget_key = f"{key_prefix}_master_time_start"
-            if st.session_state.get(start_widget_key) != current_start:
+            if start_widget_key not in st.session_state or st.session_state[start_widget_key] not in available_years:
                 st.session_state[start_widget_key] = current_start
+
             start_value = st.sidebar.selectbox(
                 "Start year",
                 available_years,
-                index=available_years.index(current_start),
                 key=start_widget_key,
             )
             st.session_state.master_time_start = int(start_value)
             st.session_state.master_year_start = int(start_value)
+
         elif mode == "Custom years":
-            current_custom = st.session_state.get("master_custom_time_values", st.session_state.get("master_custom_years", available_years))
-            current_keys = {_time_value_key(value, "Year") for value in current_custom}
-            default_values = [value for value in available_years if _time_value_key(value, "Year") in current_keys]
-            custom_widget_key = f"{key_prefix}_master_custom_time_values"
-            expected_custom = default_values or available_years
-            if st.session_state.get(custom_widget_key) != expected_custom:
-                st.session_state[custom_widget_key] = expected_custom
+            custom_widget_key = "master_custom_years_widget"
+            available_keys = {_time_value_key(value, "Year") for value in available_years}
+            if custom_widget_key not in st.session_state:
+                source_values = st.session_state.get(
+                    "master_custom_time_values",
+                    st.session_state.get("master_custom_years", available_years),
+                )
+                source_keys = {_time_value_key(value, "Year") for value in source_values}
+                st.session_state[custom_widget_key] = [
+                    value for value in available_years
+                    if _time_value_key(value, "Year") in source_keys
+                ]
+            else:
+                cleaned = [
+                    value for value in st.session_state[custom_widget_key]
+                    if _time_value_key(value, "Year") in available_keys
+                ]
+                if cleaned != st.session_state[custom_widget_key]:
+                    st.session_state[custom_widget_key] = cleaned
+
             custom = st.sidebar.multiselect(
                 "Years",
                 available_years,
-                default=expected_custom,
                 key=custom_widget_key,
+                help="Select one or more years. An empty selection intentionally returns no records.",
             )
             st.session_state.master_custom_time_values = custom
             st.session_state.master_custom_years = custom
+
         selected_values = _years_from_master_scope(available_years)
         st.session_state.master_selected_years = selected_values
         st.session_state.master_selected_months = []
+
     else:
         modes = ["All months", "Single month", "Custom months"]
+        scope_widget_key = "master_month_scope_widget"
         current_mode = str(st.session_state.get("master_time_scope", "All months"))
         if current_mode not in modes:
             current_mode = "All months"
-        scope_widget_key = f"{key_prefix}_master_time_scope"
-        if st.session_state.get(scope_widget_key) != current_mode:
+        if scope_widget_key not in st.session_state or st.session_state[scope_widget_key] not in modes:
             st.session_state[scope_widget_key] = current_mode
+
         mode = st.sidebar.selectbox(
             "Month scope",
             modes,
-            index=modes.index(current_mode),
             key=scope_widget_key,
-            help="Month values are read directly from the configured Month field and can be numeric or text labels.",
+            help=(
+                "Month values are read directly from the configured Month field. Supported examples include "
+                "Aug-26, Jul-26, Aug26, Aug27, Ago-26, Agosto26 and numeric/text month labels."
+            ),
         )
         st.session_state.master_time_scope = mode
+
         if mode == "Single month":
+            start_widget_key = "master_month_start_widget"
             current_value = st.session_state.get("master_time_start", available_values[0])
             current_key = _time_value_key(current_value, "Month")
-            index = next((i for i, value in enumerate(available_values) if _time_value_key(value, "Month") == current_key), 0)
-            start_widget_key = f"{key_prefix}_master_time_start"
-            expected_start = available_values[index]
-            if st.session_state.get(start_widget_key) != expected_start:
-                st.session_state[start_widget_key] = expected_start
+            valid_keys = {_time_value_key(value, "Month") for value in available_values}
+            if current_key not in valid_keys:
+                current_value = available_values[0]
+            if (
+                start_widget_key not in st.session_state
+                or _time_value_key(st.session_state[start_widget_key], "Month") not in valid_keys
+            ):
+                st.session_state[start_widget_key] = current_value
+
             selected_value = st.sidebar.selectbox(
                 "Month",
                 available_values,
-                index=index,
                 key=start_widget_key,
             )
             st.session_state.master_time_start = selected_value
             selected_values = [selected_value]
+
         elif mode == "Custom months":
-            current_custom = st.session_state.get("master_custom_time_values", available_values)
-            current_keys = {_time_value_key(value, "Month") for value in current_custom}
-            default_values = [value for value in available_values if _time_value_key(value, "Month") in current_keys]
-            custom_widget_key = f"{key_prefix}_master_custom_time_values"
-            expected_custom = default_values or available_values
-            if st.session_state.get(custom_widget_key) != expected_custom:
-                st.session_state[custom_widget_key] = expected_custom
+            custom_widget_key = "master_custom_months_widget"
+            available_keys = {_time_value_key(value, "Month") for value in available_values}
+            if custom_widget_key not in st.session_state:
+                source_values = st.session_state.get("master_custom_time_values", available_values)
+                source_keys = {_time_value_key(value, "Month") for value in source_values}
+                st.session_state[custom_widget_key] = [
+                    value for value in available_values
+                    if _time_value_key(value, "Month") in source_keys
+                ]
+            else:
+                cleaned = [
+                    value for value in st.session_state[custom_widget_key]
+                    if _time_value_key(value, "Month") in available_keys
+                ]
+                if cleaned != st.session_state[custom_widget_key]:
+                    st.session_state[custom_widget_key] = cleaned
+
             selected_values = st.sidebar.multiselect(
                 "Months",
                 available_values,
-                default=expected_custom,
                 key=custom_widget_key,
+                help="Select any detected Month values. An empty selection intentionally returns no records.",
             )
             st.session_state.master_custom_time_values = selected_values
         else:
             selected_values = available_values
+
         st.session_state.master_selected_months = selected_values
         st.session_state.master_selected_years = []
 
@@ -1258,7 +1362,6 @@ def _render_master_year_filter_sidebar(bundles: list[ModelBundle], key_prefix: s
         f"{selected_role}s applied: **{', '.join(map(str, selected_values)) if selected_values else 'None'}**"
     )
     return selected_values
-
 
 def _phase_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
     """Return one unified mining-phase column, accepting either Phase or Pit_Phase roles."""
@@ -1362,9 +1465,8 @@ def _available_destination_codes_for_bundles(bundles: list[ModelBundle]) -> list
 
 
 def _master_destination_mode() -> str:
-    default_mode = DESTINATION_MODE_OPTIONS[0]
-    mode = str(st.session_state.get("master_destination_mode", default_mode))
-    return mode if mode in DESTINATION_MODE_OPTIONS else default_mode
+    mode = str(st.session_state.get("master_destination_mode", DEFAULT_DESTINATION_MODE))
+    return mode if mode in DESTINATION_MODE_OPTIONS else DEFAULT_DESTINATION_MODE
 
 
 def _master_destination_label() -> str:
@@ -1377,13 +1479,13 @@ def _master_destination_label() -> str:
         for code in st.session_state.get("master_destination_custom_codes", [])
         if _normalize_destination_code(code) in VALID_DESTINATIONS
     ]
-    return f"Custom ({'+'.join(selected)})" if selected else DESTINATION_CUSTOM_MODE
+    return f"Custom ({'+'.join(selected)})" if selected else "Custom (None)"
 
 
 def _render_master_destination_filter_sidebar(bundles: list[ModelBundle], key_prefix: str) -> str:
     available_codes = _available_destination_codes_for_bundles(bundles)
     if not available_codes:
-        st.session_state.master_destination_mode = DESTINATION_MODE_OPTIONS[0]
+        st.session_state.master_destination_mode = DEFAULT_DESTINATION_MODE
         st.session_state.master_destination_custom_codes = []
         return _master_destination_label()
 
@@ -1397,15 +1499,14 @@ def _render_master_destination_filter_sidebar(bundles: list[ModelBundle], key_pr
         unsafe_allow_html=True,
     )
 
+    widget_key = "master_destination_mode_widget"
     current_mode = _master_destination_mode()
-    widget_key = f"{key_prefix}_master_destination_mode"
-    if st.session_state.get(widget_key) != current_mode:
+    if widget_key not in st.session_state or st.session_state[widget_key] not in DESTINATION_MODE_OPTIONS:
         st.session_state[widget_key] = current_mode
 
     mode = st.sidebar.selectbox(
         "Destination / Ore Type",
         DESTINATION_MODE_OPTIONS,
-        index=DESTINATION_MODE_OPTIONS.index(current_mode),
         key=widget_key,
         help=(
             "Transversal master filter applied across Model Description, Model Evaluation, "
@@ -1417,21 +1518,36 @@ def _render_master_destination_filter_sidebar(bundles: list[ModelBundle], key_pr
 
     if mode == DESTINATION_CUSTOM_MODE:
         display_options = [_display_destination(code) for code in available_codes]
-        current_custom = [
-            _display_destination(code)
-            for code in st.session_state.get("master_destination_custom_codes", available_codes)
-            if _normalize_destination_code(code) in available_codes
-        ]
-        custom_widget_key = f"{key_prefix}_master_destination_custom_codes"
-        if st.session_state.get(custom_widget_key) != current_custom:
-            st.session_state[custom_widget_key] = current_custom
+        custom_widget_key = "master_destination_custom_codes_widget"
+        available_set = set(available_codes)
+
+        if custom_widget_key not in st.session_state:
+            if "master_destination_custom_codes" in st.session_state:
+                source_codes = [
+                    _normalize_destination_code(code)
+                    for code in st.session_state.master_destination_custom_codes
+                    if _normalize_destination_code(code) in available_set
+                ]
+            else:
+                source_codes = list(available_codes)
+            st.session_state[custom_widget_key] = [_display_destination(code) for code in source_codes]
+        else:
+            cleaned_display = [
+                _display_destination(code)
+                for code in st.session_state[custom_widget_key]
+                if _normalize_destination_code(code) in available_set
+            ]
+            if cleaned_display != st.session_state[custom_widget_key]:
+                st.session_state[custom_widget_key] = cleaned_display
 
         selected_display = st.sidebar.multiselect(
             "Detected destinations",
             display_options,
-            default=current_custom or display_options,
             key=custom_widget_key,
-            help="Select the required combination from the destination codes detected in the loaded models.",
+            help=(
+                "Select the required combination from the destination codes detected in the loaded models. "
+                "An empty selection intentionally returns no records."
+            ),
         )
         st.session_state.master_destination_custom_codes = [
             _normalize_destination_code(code) for code in selected_display
@@ -1440,7 +1556,6 @@ def _render_master_destination_filter_sidebar(bundles: list[ModelBundle], key_pr
     applied_label = _master_destination_label()
     st.sidebar.caption(f"Destination / Ore Type applied: **{applied_label}**")
     return applied_label
-
 
 def _valid_destination_mask(data: pd.DataFrame, config: ModelConfig) -> pd.Series:
     dest_col = config.column_for_role("Destination")
@@ -2671,7 +2786,7 @@ def _apply_destination_mode(data: pd.DataFrame, config: ModelConfig, mode: str) 
             if _normalize_destination_code(code) in VALID_DESTINATIONS
         }
     else:
-        selected_codes = DESTINATION_MODE_CODES.get(mode, DESTINATION_MODE_CODES[DESTINATION_MODE_OPTIONS[0]])
+        selected_codes = DESTINATION_MODE_CODES.get(mode, DESTINATION_MODE_CODES[DEFAULT_DESTINATION_MODE])
 
     dest_code = data[dest_col].map(_normalize_destination_code)
     return data[dest_code.isin(selected_codes)]
@@ -4398,6 +4513,10 @@ def render_setup() -> None:
             and _is_grade_like_column(column)
         ]
         grade_columns = st.multiselect("Select up to nine grade variables", grade_options, default=_suggest_grades(grade_options))
+        st.form_submit_button(
+            "Refresh grade-variable table",
+            help="Apply the current grade selection and refresh the configuration rows below without saving the model.",
+        )
         max_grades = _configured_max_grades()
         if len(grade_columns) > max_grades:
             st.error(f"Select a maximum of {max_grades} grade variables.")
@@ -4418,6 +4537,10 @@ def render_setup() -> None:
             and _is_category_candidate(frame, column)
         ]
         category_columns = st.multiselect("Select category/filter columns", category_options, default=_suggest_categories(frame))
+        st.form_submit_button(
+            "Refresh category-variable table",
+            help="Apply the current category selection and refresh the configuration rows below without saving the model.",
+        )
         category_specs: list[CategorySpec] = []
         for index, column in enumerate(category_columns, start=1):
             row = st.columns([1.3, 0.9])

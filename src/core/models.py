@@ -10,6 +10,8 @@ import pandas as pd
 MODEL_TYPES = [
     "Resource Model",
     "Reserve Model",
+    "Forecast",
+    "Budget",
     "Grade Control",
     "Stockpiles",
     "Quarry",
