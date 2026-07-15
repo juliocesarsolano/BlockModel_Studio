@@ -27,6 +27,7 @@ CATEGORY_ROLES = [
     "Alteration",
     "Weathering",
     "Year",
+    "Month",
     "Phase",
     "Pit_Phase",
     "Pit",

@@ -123,11 +123,13 @@ def _page_header_chips(title: str) -> list[tuple[str, str]]:
 
     # Use the app helpers when available; fall back to raw session-state values during early page loads.
     try:
-        year_label = _master_year_label()  # type: ignore[name-defined]
+        time_role = _active_time_role()  # type: ignore[name-defined]
+        time_label = _master_time_label()  # type: ignore[name-defined]
     except Exception:
-        year_label = st.session_state.get("master_year_scope", "LOM")
-    if year_label and title not in {"Model Setup"}:
-        chips.append(("Year", _format_header_chip_text(year_label, 30)))
+        time_role = st.session_state.get("master_time_role", "Year")
+        time_label = st.session_state.get("master_time_scope", "LOM")
+    if time_label and title not in {"Model Setup"}:
+        chips.append((str(time_role), _format_header_chip_text(time_label, 30)))
 
     try:
         phase_label = _master_phase_label()  # type: ignore[name-defined]
@@ -139,7 +141,7 @@ def _page_header_chips(title: str) -> list[tuple[str, str]]:
     try:
         destination_label = _master_destination_label()  # type: ignore[name-defined]
     except Exception:
-        destination_label = st.session_state.get("master_destination_mode", "HG+LG")
+        destination_label = st.session_state.get("master_destination_mode", DESTINATION_MODE_OPTIONS[0])
     if destination_label and title not in {"Model Setup"}:
         chips.append(("Destination", _format_header_chip_text(destination_label, 28)))
 
@@ -596,6 +598,7 @@ def _infer_role(column: str) -> str:
         "Alteration": {"ALTERATION", "ALTER", "ALT"},
         "Weathering": {"WEATHERING", "WEATH", "WX"},
         "Year": {"YEAR", "YEARS", "ANIO", "ANO"},
+        "Month": {"MONTH", "MONTHS", "MONTH_ID", "MONTH_NUM", "MONTH_NUMBER", "MES"},
         "Pit_Phase": {"PIT_PHASE", "PITPHASE"},
         "Phase": {"PHASE", "PHASE_ID"},
         "Pit": {"PIT", "PIT_NAME"},
@@ -815,10 +818,11 @@ def _filter_panel(bundle: ModelBundle, key_prefix: str) -> tuple[pd.DataFrame, d
     selections: dict[str, list[Any]] = {}
 
     with st.expander("Filters", expanded=False):
+        active_time_col = _time_column(config, data)
         filter_columns = st.multiselect(
             "Active filters",
             options=config.category_columns,
-            default=[column for column in config.category_columns if config.column_for_role("Destination") == column or config.column_for_role("Year") == column][:2],
+            default=[column for column in config.category_columns if config.column_for_role("Destination") == column or active_time_col == column][:2],
             format_func=lambda col: f"{config.category_label(col)} [{col}]",
             key=f"{key_prefix}_active_filters",
         )
@@ -902,52 +906,33 @@ DESTINATION_COLORS = {
     "W2": "#808080",
     "HG": "#FF0000",
     "LG": "#0000FF",
+    "MG": "#C55A11",
 }
 
 _master_defaults = master_filter_defaults()
 VALID_DESTINATIONS = {str(value).casefold() for value in _master_defaults.get("valid_destinations", ["h1", "h2", "l1", "l2", "l3", "m1", "m2", "m3", "mw1", "mw2", "w1", "w2"])}
 HG_DESTINATIONS = {str(value).casefold() for value in _master_defaults.get("hg_destinations", ["h1", "h2"])}
 LG_DESTINATIONS = {str(value).casefold() for value in _master_defaults.get("lg_destinations", ["l1", "l2", "l3"])}
-M_DESTINATIONS = {"m1", "m2", "m3"}
+MG_DESTINATIONS = {str(value).casefold() for value in _master_defaults.get("mg_destinations", ["m1", "m2", "m3"])}
 MW_DESTINATIONS = {"mw1", "mw2"}
 W_DESTINATIONS = {"w1", "w2"}
-VALID_DESTINATIONS = VALID_DESTINATIONS | W_DESTINATIONS
+VALID_DESTINATIONS = VALID_DESTINATIONS | MG_DESTINATIONS | MW_DESTINATIONS | W_DESTINATIONS
+
+DESTINATION_CUSTOM_MODE = "Custom combination"
 DESTINATION_MODE_OPTIONS = [
-    "HG+LG",
-    "HG+LG+MW",
-    "HG",
-    "LG",
-    "M1",
-    "M2",
-    "M3",
-    "M1+M2+M3",
-    "MW1",
-    "MW2",
-    "MW1+MW2 (Mineral Waste)",
-    "W1",
-    "W2",
-    "W1+W2 (Waste)",
-    "All destinations",
+    "Ore Resource (HG+LG+MG+MW)",
+    "Ore Reserve (HG+LG+MG)",
+    "Waste (W1+W2)",
+    "Mineral Waste (MW1+MW2)",
+    DESTINATION_CUSTOM_MODE,
 ]
 DESTINATION_MODE_CODES = {
-    "HG+LG": HG_DESTINATIONS | LG_DESTINATIONS,
-    "HG+LG+MW": HG_DESTINATIONS | LG_DESTINATIONS | MW_DESTINATIONS,
-    "HG": HG_DESTINATIONS,
-    "HG only": HG_DESTINATIONS,
-    "LG": LG_DESTINATIONS,
-    "LG only": LG_DESTINATIONS,
-    "M1": {"m1"},
-    "M2": {"m2"},
-    "M3": {"m3"},
-    "M1+M2+M3": M_DESTINATIONS,
-    "MW1": {"mw1"},
-    "MW2": {"mw2"},
-    "MW1+MW2 (Mineral Waste)": MW_DESTINATIONS,
-    "W1": {"w1"},
-    "W2": {"w2"},
-    "W1+W2 (Waste)": W_DESTINATIONS,
-    "All destinations": VALID_DESTINATIONS,
+    "Ore Resource (HG+LG+MG+MW)": HG_DESTINATIONS | LG_DESTINATIONS | MG_DESTINATIONS | MW_DESTINATIONS,
+    "Ore Reserve (HG+LG+MG)": HG_DESTINATIONS | LG_DESTINATIONS | MG_DESTINATIONS,
+    "Waste (W1+W2)": W_DESTINATIONS,
+    "Mineral Waste (MW1+MW2)": MW_DESTINATIONS,
 }
+DESTINATION_CODE_ORDER = ["h1", "h2", "l1", "l2", "l3", "m1", "m2", "m3", "mw1", "mw2", "w1", "w2"]
 
 def _normalize_label(value: Any) -> str:
     if pd.isna(value):
@@ -991,6 +976,290 @@ def _year_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
     return None
 
 
+def _month_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
+    configured = config.column_for_role("Month")
+    if configured and configured in data.columns:
+        return configured
+    aliases = {"month", "months", "month_id", "month_num", "month_number", "mes"}
+    for column in data.columns:
+        normalized = re.sub(r"[^a-z0-9]+", "_", str(column).casefold()).strip("_")
+        if normalized in aliases:
+            return column
+    return None
+
+
+def _active_time_role() -> str:
+    role = str(st.session_state.get("master_time_role", "Year"))
+    return role if role in {"Year", "Month"} else "Year"
+
+
+def _time_column(config: ModelConfig, data: pd.DataFrame, role: str | None = None) -> str | None:
+    selected_role = role or _active_time_role()
+    return _month_column(config, data) if selected_role == "Month" else _year_column(config, data)
+
+
+def _time_roles_for_bundles(bundles: list[ModelBundle]) -> list[str]:
+    roles: list[str] = []
+    if any(_year_column(bundle.config, bundle.data) for bundle in bundles):
+        roles.append("Year")
+    if any(_month_column(bundle.config, bundle.data) for bundle in bundles):
+        roles.append("Month")
+    return roles
+
+
+def _time_value_key(value: Any, role: str) -> str:
+    if pd.isna(value):
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.notna(numeric) and float(numeric).is_integer():
+        return str(int(numeric))
+    return " ".join(text.split()).casefold()
+
+
+def _time_display_value(value: Any, role: str) -> Any:
+    key = _time_value_key(value, role)
+    if not key:
+        return ""
+    try:
+        return int(key)
+    except ValueError:
+        return " ".join(str(value).strip().split())
+
+
+def _time_sort_key(value: Any, role: str) -> tuple[Any, ...]:
+    key = _time_value_key(value, role)
+    try:
+        return (0, int(key))
+    except ValueError:
+        pass
+    month_order = {
+        "jan": 1, "january": 1, "ene": 1, "enero": 1,
+        "feb": 2, "february": 2, "febrero": 2,
+        "mar": 3, "march": 3, "marzo": 3,
+        "apr": 4, "april": 4, "abr": 4, "abril": 4,
+        "may": 5, "mayo": 5,
+        "jun": 6, "june": 6, "junio": 6,
+        "jul": 7, "july": 7, "julio": 7,
+        "aug": 8, "august": 8, "ago": 8, "agosto": 8,
+        "sep": 9, "sept": 9, "september": 9, "septiembre": 9,
+        "oct": 10, "october": 10, "octubre": 10,
+        "nov": 11, "november": 11, "noviembre": 11,
+        "dec": 12, "december": 12, "dic": 12, "diciembre": 12,
+    }
+    if role == "Month" and key in month_order:
+        return (1, month_order[key])
+    return (2, key)
+
+
+def _available_time_values_for_bundles(bundles: list[ModelBundle], role: str) -> list[Any]:
+    values_by_key: dict[str, Any] = {}
+    for bundle in bundles:
+        column = _time_column(bundle.config, bundle.data, role)
+        if not column or column not in bundle.data.columns:
+            continue
+        for value in bundle.data[column].dropna().tolist():
+            key = _time_value_key(value, role)
+            if key and key not in values_by_key:
+                values_by_key[key] = _time_display_value(value, role)
+    return sorted(values_by_key.values(), key=lambda value: _time_sort_key(value, role))
+
+
+def _years_from_master_scope(available_years: list[int]) -> list[int]:
+    if not available_years:
+        return []
+    mode = st.session_state.get("master_time_scope", st.session_state.get("master_year_scope", "LOM"))
+    if mode == "All years":
+        return available_years
+    if mode == "Custom years":
+        custom = st.session_state.get("master_custom_time_values", st.session_state.get("master_custom_years", available_years))
+        selected_keys = {_time_value_key(value, "Year") for value in custom}
+        return [year for year in available_years if _time_value_key(year, "Year") in selected_keys] or available_years
+    if mode == "LOM":
+        start_year, end_year = available_years[0], available_years[-1]
+    elif mode == "Single year":
+        start_year = int(st.session_state.get("master_time_start", st.session_state.get("master_year_start", available_years[0])))
+        end_year = start_year
+    else:
+        period_years = int(str(mode).removesuffix("Y"))
+        start_year = int(st.session_state.get("master_time_start", st.session_state.get("master_year_start", available_years[0])))
+        end_year = start_year + period_years - 1
+    return [year for year in available_years if start_year <= year <= end_year]
+
+
+def _master_time_label() -> str:
+    role = _active_time_role()
+    mode = str(st.session_state.get("master_time_scope", "LOM" if role == "Year" else "All months"))
+    selected = st.session_state.get("master_selected_time_values", [])
+    if not selected:
+        return f"All available {role.casefold()}s"
+    if role == "Year":
+        if mode == "Custom years":
+            return ", ".join(map(str, selected))
+        return f"{mode}: {min(selected)}-{max(selected)}" if len(selected) > 1 else f"{mode}: {selected[0]}"
+    if mode == "Single month":
+        return f"Single month: {selected[0]}"
+    if mode == "Custom months":
+        return ", ".join(map(str, selected))
+    return "All available months"
+
+
+def _master_year_label() -> str:
+    """Backward-compatible alias used by existing report builders."""
+    return _master_time_label()
+
+
+def _render_master_year_filter_sidebar(bundles: list[ModelBundle], key_prefix: str) -> list[Any]:
+    time_roles = _time_roles_for_bundles(bundles)
+    if not time_roles:
+        st.session_state.master_selected_time_values = []
+        st.session_state.master_selected_years = []
+        st.session_state.master_selected_months = []
+        return []
+
+    st.sidebar.markdown(
+        """
+        <div class="bm-side-banner">
+            <div class="bm-banner-kicker">Time Scope</div>
+            <div class="bm-banner-title">Year / Month filter</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    current_role = _active_time_role()
+    if current_role not in time_roles:
+        current_role = time_roles[0]
+    role_widget_key = f"{key_prefix}_master_time_role"
+    if st.session_state.get(role_widget_key) != current_role:
+        st.session_state[role_widget_key] = current_role
+    selected_role = st.sidebar.selectbox(
+        "Time field",
+        time_roles,
+        index=time_roles.index(current_role),
+        key=role_widget_key,
+        help="Choose Year or Month when both temporal fields are configured in the loaded model(s).",
+    )
+    st.session_state.master_time_role = selected_role
+
+    available_values = _available_time_values_for_bundles(bundles, selected_role)
+    if not available_values:
+        st.session_state.master_selected_time_values = []
+        return []
+
+    if selected_role == "Year":
+        available_years = [int(value) for value in available_values]
+        modes = ["LOM", "Single year", "2Y", "5Y", "10Y", "Custom years", "All years"]
+        current_mode = str(st.session_state.get("master_time_scope", st.session_state.get("master_year_scope", "LOM")))
+        if current_mode not in modes:
+            current_mode = "LOM"
+        scope_widget_key = f"{key_prefix}_master_time_scope"
+        if st.session_state.get(scope_widget_key) != current_mode:
+            st.session_state[scope_widget_key] = current_mode
+        mode = st.sidebar.selectbox(
+            "Year scope",
+            modes,
+            index=modes.index(current_mode),
+            key=scope_widget_key,
+            help=f"LOM uses the loaded data range: {available_years[0]}-{available_years[-1]}. This scope is applied across evaluation, comparison and reports.",
+        )
+        st.session_state.master_time_scope = mode
+        st.session_state.master_year_scope = mode
+        if mode in {"Single year", "2Y", "5Y", "10Y"}:
+            current_start = int(st.session_state.get("master_time_start", st.session_state.get("master_year_start", available_years[0])))
+            if current_start not in available_years:
+                current_start = available_years[0]
+            start_widget_key = f"{key_prefix}_master_time_start"
+            if st.session_state.get(start_widget_key) != current_start:
+                st.session_state[start_widget_key] = current_start
+            start_value = st.sidebar.selectbox(
+                "Start year",
+                available_years,
+                index=available_years.index(current_start),
+                key=start_widget_key,
+            )
+            st.session_state.master_time_start = int(start_value)
+            st.session_state.master_year_start = int(start_value)
+        elif mode == "Custom years":
+            current_custom = st.session_state.get("master_custom_time_values", st.session_state.get("master_custom_years", available_years))
+            current_keys = {_time_value_key(value, "Year") for value in current_custom}
+            default_values = [value for value in available_years if _time_value_key(value, "Year") in current_keys]
+            custom_widget_key = f"{key_prefix}_master_custom_time_values"
+            expected_custom = default_values or available_years
+            if st.session_state.get(custom_widget_key) != expected_custom:
+                st.session_state[custom_widget_key] = expected_custom
+            custom = st.sidebar.multiselect(
+                "Years",
+                available_years,
+                default=expected_custom,
+                key=custom_widget_key,
+            )
+            st.session_state.master_custom_time_values = custom
+            st.session_state.master_custom_years = custom
+        selected_values = _years_from_master_scope(available_years)
+        st.session_state.master_selected_years = selected_values
+        st.session_state.master_selected_months = []
+    else:
+        modes = ["All months", "Single month", "Custom months"]
+        current_mode = str(st.session_state.get("master_time_scope", "All months"))
+        if current_mode not in modes:
+            current_mode = "All months"
+        scope_widget_key = f"{key_prefix}_master_time_scope"
+        if st.session_state.get(scope_widget_key) != current_mode:
+            st.session_state[scope_widget_key] = current_mode
+        mode = st.sidebar.selectbox(
+            "Month scope",
+            modes,
+            index=modes.index(current_mode),
+            key=scope_widget_key,
+            help="Month values are read directly from the configured Month field and can be numeric or text labels.",
+        )
+        st.session_state.master_time_scope = mode
+        if mode == "Single month":
+            current_value = st.session_state.get("master_time_start", available_values[0])
+            current_key = _time_value_key(current_value, "Month")
+            index = next((i for i, value in enumerate(available_values) if _time_value_key(value, "Month") == current_key), 0)
+            start_widget_key = f"{key_prefix}_master_time_start"
+            expected_start = available_values[index]
+            if st.session_state.get(start_widget_key) != expected_start:
+                st.session_state[start_widget_key] = expected_start
+            selected_value = st.sidebar.selectbox(
+                "Month",
+                available_values,
+                index=index,
+                key=start_widget_key,
+            )
+            st.session_state.master_time_start = selected_value
+            selected_values = [selected_value]
+        elif mode == "Custom months":
+            current_custom = st.session_state.get("master_custom_time_values", available_values)
+            current_keys = {_time_value_key(value, "Month") for value in current_custom}
+            default_values = [value for value in available_values if _time_value_key(value, "Month") in current_keys]
+            custom_widget_key = f"{key_prefix}_master_custom_time_values"
+            expected_custom = default_values or available_values
+            if st.session_state.get(custom_widget_key) != expected_custom:
+                st.session_state[custom_widget_key] = expected_custom
+            selected_values = st.sidebar.multiselect(
+                "Months",
+                available_values,
+                default=expected_custom,
+                key=custom_widget_key,
+            )
+            st.session_state.master_custom_time_values = selected_values
+        else:
+            selected_values = available_values
+        st.session_state.master_selected_months = selected_values
+        st.session_state.master_selected_years = []
+
+    st.session_state.master_selected_time_values = selected_values
+    st.sidebar.caption(
+        f"{selected_role}s applied: **{', '.join(map(str, selected_values)) if selected_values else 'None'}**"
+    )
+    return selected_values
+
+
 def _phase_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
     """Return one unified mining-phase column, accepting either Phase or Pit_Phase roles."""
     for role in ["Phase", "Pit_Phase"]:
@@ -1005,124 +1274,6 @@ def _phase_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
         if normalized in aliases or compact in {alias.replace("_", "") for alias in aliases}:
             return column
     return None
-
-
-def _available_years_for_bundles(bundles: list[ModelBundle]) -> list[int]:
-    years: set[int] = set()
-    for bundle in bundles:
-        column = _year_column(bundle.config, bundle.data)
-        if not column:
-            continue
-        numeric = pd.to_numeric(bundle.data[column], errors="coerce")
-        years.update(int(value) for value in numeric.dropna().unique() if float(value).is_integer())
-    return sorted(years)
-
-
-def _available_year_bounds(available_years: list[int]) -> tuple[int, int] | None:
-    if not available_years:
-        return None
-    return min(available_years), max(available_years)
-
-
-def _years_from_master_scope(available_years: list[int]) -> list[int]:
-    if not available_years:
-        return []
-
-    mode = st.session_state.get("master_year_scope", "LOM")
-    if mode == "All years":
-        return available_years
-    if mode == "Custom years":
-        custom = st.session_state.get("master_custom_years", available_years)
-        selected = [int(year) for year in custom if int(year) in available_years]
-        return selected or available_years
-
-    if mode == "LOM":
-        start_year = available_years[0]
-        end_year = available_years[-1]
-    elif mode == "Single year":
-        start_year = int(st.session_state.get("master_year_start", available_years[0]))
-        end_year = start_year
-    else:
-        period_years = int(str(mode).removesuffix("Y"))
-        start_year = int(st.session_state.get("master_year_start", available_years[0]))
-        end_year = start_year + period_years - 1
-
-    return [year for year in available_years if start_year <= year <= end_year]
-
-
-def _master_year_label() -> str:
-    mode = st.session_state.get("master_year_scope", "LOM")
-    selected = st.session_state.get("master_selected_years", [])
-    if not selected:
-        return "All available years"
-    if mode == "Custom years":
-        return ", ".join(map(str, selected))
-    return f"{mode}: {min(selected)}-{max(selected)}" if len(selected) > 1 else f"{mode}: {selected[0]}"
-
-
-def _render_master_year_filter_sidebar(bundles: list[ModelBundle], key_prefix: str) -> list[int]:
-    available_years = _available_years_for_bundles(bundles)
-    if not available_years:
-        st.session_state.master_selected_years = []
-        return []
-    year_bounds = _available_year_bounds(available_years)
-    lom_help = (
-        f"LOM uses the loaded data range: {year_bounds[0]}-{year_bounds[1]}."
-        if year_bounds
-        else "LOM uses the loaded data range."
-    )
-
-    st.sidebar.markdown(
-        """
-        <div class="bm-side-banner">
-            <div class="bm-banner-kicker">Time Scope</div>
-            <div class="bm-banner-title">Year filter</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    modes = ["LOM", "Single year", "2Y", "5Y", "10Y", "Custom years", "All years"]
-    current_mode = st.session_state.get("master_year_scope", "LOM")
-    if current_mode not in modes:
-        current_mode = "LOM"
-    mode = st.sidebar.selectbox(
-        "Year scope",
-        modes,
-        index=modes.index(current_mode),
-        key=f"{key_prefix}_master_year_scope",
-        help=f"{lom_help} This scope is applied across evaluation, comparison and reports.",
-    )
-    st.session_state.master_year_scope = mode
-
-    if mode in {"Single year", "2Y", "5Y", "10Y"}:
-        current_start = int(st.session_state.get("master_year_start", available_years[0]))
-        if current_start not in available_years:
-            current_start = available_years[0]
-        start = st.sidebar.selectbox(
-            "Start year",
-            available_years,
-            index=available_years.index(current_start),
-            key=f"{key_prefix}_master_year_start",
-        )
-        st.session_state.master_year_start = int(start)
-    elif mode == "Custom years":
-        current_custom = [
-            int(year) for year in st.session_state.get("master_custom_years", available_years)
-            if int(year) in available_years
-        ]
-        custom = st.sidebar.multiselect(
-            "Years",
-            available_years,
-            default=current_custom or available_years,
-            key=f"{key_prefix}_master_custom_years",
-        )
-        st.session_state.master_custom_years = [int(year) for year in custom]
-
-    selected_years = _years_from_master_scope(available_years)
-    st.session_state.master_selected_years = selected_years
-    st.sidebar.caption(f"Years applied: **{', '.join(map(str, selected_years)) if selected_years else 'None'}**")
-    return selected_years
 
 
 def _natural_phase_sort_key(value: Any) -> tuple[Any, ...]:
@@ -1191,20 +1342,50 @@ def _render_master_phase_filter_sidebar(bundles: list[ModelBundle], key_prefix: 
     return st.session_state.master_selected_phases
 
 
+def _destination_sort_key(code: str) -> tuple[int, str]:
+    normalized = _normalize_destination_code(code)
+    try:
+        return DESTINATION_CODE_ORDER.index(normalized), normalized
+    except ValueError:
+        return len(DESTINATION_CODE_ORDER), normalized
+
+
+def _available_destination_codes_for_bundles(bundles: list[ModelBundle]) -> list[str]:
+    detected: set[str] = set()
+    for bundle in bundles:
+        destination_col = bundle.config.column_for_role("Destination")
+        if not destination_col or destination_col not in bundle.data.columns:
+            continue
+        normalized = bundle.data[destination_col].map(_normalize_destination_code)
+        detected.update(code for code in normalized.tolist() if code in VALID_DESTINATIONS)
+    return sorted(detected, key=_destination_sort_key)
+
+
+def _master_destination_mode() -> str:
+    default_mode = DESTINATION_MODE_OPTIONS[0]
+    mode = str(st.session_state.get("master_destination_mode", default_mode))
+    return mode if mode in DESTINATION_MODE_OPTIONS else default_mode
+
+
 def _master_destination_label() -> str:
-    mode = str(st.session_state.get("master_destination_mode", "HG+LG"))
-    return mode if mode in DESTINATION_MODE_OPTIONS else "HG+LG"
+    mode = _master_destination_mode()
+    if mode != DESTINATION_CUSTOM_MODE:
+        return mode
+
+    selected = [
+        _display_destination(code)
+        for code in st.session_state.get("master_destination_custom_codes", [])
+        if _normalize_destination_code(code) in VALID_DESTINATIONS
+    ]
+    return f"Custom ({'+'.join(selected)})" if selected else DESTINATION_CUSTOM_MODE
 
 
 def _render_master_destination_filter_sidebar(bundles: list[ModelBundle], key_prefix: str) -> str:
-    has_destination = any(
-        bundle.config.column_for_role("Destination") in bundle.data.columns
-        for bundle in bundles
-        if bundle.config.column_for_role("Destination")
-    )
-    if not has_destination:
-        st.session_state.master_destination_mode = "All destinations"
-        return "All destinations"
+    available_codes = _available_destination_codes_for_bundles(bundles)
+    if not available_codes:
+        st.session_state.master_destination_mode = DESTINATION_MODE_OPTIONS[0]
+        st.session_state.master_destination_custom_codes = []
+        return _master_destination_label()
 
     st.sidebar.markdown(
         """
@@ -1216,7 +1397,7 @@ def _render_master_destination_filter_sidebar(bundles: list[ModelBundle], key_pr
         unsafe_allow_html=True,
     )
 
-    current_mode = _master_destination_label()
+    current_mode = _master_destination_mode()
     widget_key = f"{key_prefix}_master_destination_mode"
     if st.session_state.get(widget_key) != current_mode:
         st.session_state[widget_key] = current_mode
@@ -1228,13 +1409,37 @@ def _render_master_destination_filter_sidebar(bundles: list[ModelBundle], key_pr
         key=widget_key,
         help=(
             "Transversal master filter applied across Model Description, Model Evaluation, "
-            "Model Comparison and Report Builder. HG+LG = H1/H2 + L1/L2/L3; HG+LG+MW adds "
-            "MW1/MW2; All destinations includes all valid H/L/M/MW/W destinations."
+            "Model Comparison and Report Builder. MG means Medium Grade and groups M1/M2/M3. "
+            "Use Custom combination to select any combination of the destinations detected in the loaded models."
         ),
     )
     st.session_state.master_destination_mode = mode
-    st.sidebar.caption(f"Destination / Ore Type applied: **{mode}**")
-    return mode
+
+    if mode == DESTINATION_CUSTOM_MODE:
+        display_options = [_display_destination(code) for code in available_codes]
+        current_custom = [
+            _display_destination(code)
+            for code in st.session_state.get("master_destination_custom_codes", available_codes)
+            if _normalize_destination_code(code) in available_codes
+        ]
+        custom_widget_key = f"{key_prefix}_master_destination_custom_codes"
+        if st.session_state.get(custom_widget_key) != current_custom:
+            st.session_state[custom_widget_key] = current_custom
+
+        selected_display = st.sidebar.multiselect(
+            "Detected destinations",
+            display_options,
+            default=current_custom or display_options,
+            key=custom_widget_key,
+            help="Select the required combination from the destination codes detected in the loaded models.",
+        )
+        st.session_state.master_destination_custom_codes = [
+            _normalize_destination_code(code) for code in selected_display
+        ]
+
+    applied_label = _master_destination_label()
+    st.sidebar.caption(f"Destination / Ore Type applied: **{applied_label}**")
+    return applied_label
 
 
 def _valid_destination_mask(data: pd.DataFrame, config: ModelConfig) -> pd.Series:
@@ -1261,13 +1466,16 @@ def _apply_global_scope(data: pd.DataFrame, config: ModelConfig) -> pd.DataFrame
     dest_col = config.column_for_role("Destination")
     if dest_col and dest_col in filtered.columns:
         filtered = filtered[_valid_destination_mask(filtered, config)]
-        filtered = _apply_destination_mode(filtered, config, _master_destination_label())
+        filtered = _apply_destination_mode(filtered, config, _master_destination_mode())
 
-    year_col = _year_column(config, filtered)
-    if year_col and "master_selected_years" in st.session_state:
-        selected_years = st.session_state.get("master_selected_years", [])
-        years = pd.to_numeric(filtered[year_col], errors="coerce")
-        filtered = filtered[years.isin([int(year) for year in selected_years])]
+    time_role = _active_time_role()
+    time_col = _time_column(config, filtered, time_role)
+    if time_col and "master_selected_time_values" in st.session_state:
+        selected_values = st.session_state.get("master_selected_time_values", [])
+        selected_keys = {_time_value_key(value, time_role) for value in selected_values}
+        if selected_keys:
+            value_keys = filtered[time_col].map(lambda value: _time_value_key(value, time_role))
+            filtered = filtered[value_keys.isin(selected_keys)]
 
     phase_col = _phase_column(config, filtered)
     if phase_col and phase_col in filtered.columns and "master_selected_phases" in st.session_state:
@@ -1291,9 +1499,10 @@ def _scope_caption(data_before: pd.DataFrame, data_after: pd.DataFrame, config: 
     parts = [f"Rows after master scope: **{len(data_after):,}** of {len(data_before):,}"]
     if blk_col:
         parts.append(f"BLK_MODEL: **{st.session_state.get('master_blk_model_scope', '1 - In situ')}**")
-    year_col = _year_column(config, data_before)
-    if year_col:
-        parts.append(f"Years: **{_master_year_label()}**")
+    time_role = _active_time_role()
+    time_col = _time_column(config, data_before, time_role)
+    if time_col:
+        parts.append(f"{time_role}s: **{_master_time_label()}**")
     phase_col = _phase_column(config, data_before)
     if phase_col:
         parts.append(f"Phases: **{_master_phase_label()}**")
@@ -1344,9 +1553,10 @@ def _table_filter_note_items(
         if blk_col:
             items.append(f"Master BLK_MODEL scope: {st.session_state.get('master_blk_model_scope', '1 - In situ')}")
 
-        year_col = _year_column(config, data_for_roles)
-        if year_col:
-            items.append(f"Master Year scope: {_master_year_label()}")
+        time_role = _active_time_role()
+        time_col = _time_column(config, data_for_roles, time_role)
+        if time_col:
+            items.append(f"Master {time_role} scope: {_master_time_label()}")
 
         phase_col = _phase_column(config, data_for_roles)
         if phase_col:
@@ -1408,8 +1618,9 @@ def _comparison_filter_note_items(
         items.append("Rows after master scope: " + "; ".join(row_counts))
         if any(_block_model_column(bundle.config, bundle.data) for bundle in bundles.values()):
             items.append(f"Master BLK_MODEL scope: {st.session_state.get('master_blk_model_scope', '1 - In situ')}")
-        if any(_year_column(bundle.config, bundle.data) for bundle in bundles.values()):
-            items.append(f"Master Year scope: {_master_year_label()}")
+        time_role = _active_time_role()
+        if any(_time_column(bundle.config, bundle.data, time_role) for bundle in bundles.values()):
+            items.append(f"Master {time_role} scope: {_master_time_label()}")
         if any(_phase_column(bundle.config, bundle.data) for bundle in bundles.values()):
             items.append(f"Master Phase/Pit_Phase scope: {_master_phase_label()}")
         if any(bundle.config.column_for_role("Destination") for bundle in bundles.values()):
@@ -1852,7 +2063,7 @@ def _resource_calculation_audit(source_data: pd.DataFrame, scoped_data: pd.DataF
         )
 
     add_row("01. Uploaded/cleaned model", source_data, "Before transverse BLK_MODEL and destination exclusions.")
-    add_row("02. Master scope", scoped_data, "BLK_MODEL, Year scope and invalid/CUT/NONE destinations are applied.")
+    add_row("02. Master scope", scoped_data, "BLK_MODEL, Year/Month scope and invalid/CUT/NONE destinations are applied.")
     add_row("03. Resource tabulation", final_data, f"Destination mode = {destination_mode}.")
     excluded_by_destination_mode = scoped_data.loc[scoped_data.index.difference(final_data.index)]
     if not excluded_by_destination_mode.empty:
@@ -2385,8 +2596,8 @@ def _dashboard_filters(bundle: ModelBundle, key_prefix: str) -> tuple[pd.DataFra
     config = bundle.config
     data = bundle.data.copy()
     filters: dict[str, list[Any]] = {}
-    for role in ["Year", "Pit"]:
-        column = config.column_for_role(role)
+    for role in [_active_time_role(), "Pit"]:
+        column = _time_column(config, data, role) if role in {"Year", "Month"} else config.column_for_role(role)
         if column and column in data.columns:
             values = sorted(data[column].dropna().unique().tolist())
             filters[column] = values
@@ -2453,8 +2664,17 @@ def _apply_destination_mode(data: pd.DataFrame, config: ModelConfig, mode: str) 
     if not dest_col or dest_col not in data.columns or data.empty:
         return data
 
+    if mode == DESTINATION_CUSTOM_MODE or str(mode).startswith("Custom"):
+        selected_codes = {
+            _normalize_destination_code(code)
+            for code in st.session_state.get("master_destination_custom_codes", [])
+            if _normalize_destination_code(code) in VALID_DESTINATIONS
+        }
+    else:
+        selected_codes = DESTINATION_MODE_CODES.get(mode, DESTINATION_MODE_CODES[DESTINATION_MODE_OPTIONS[0]])
+
     dest_code = data[dest_col].map(_normalize_destination_code)
-    return data[dest_code.isin(DESTINATION_MODE_CODES.get(mode, VALID_DESTINATIONS))]
+    return data[dest_code.isin(selected_codes)]
 
 def _bench_order(values: pd.Series) -> list[Any]:
     clean = [value for value in values.dropna().unique().tolist()]
@@ -2576,15 +2796,16 @@ def _plot_stacked_by_bench(data: pd.DataFrame, config: ModelConfig, color_role: 
 
 
 def _active_year_scope_short_label() -> str:
-    mode = str(st.session_state.get("master_year_scope", "LOM"))
-    selected = st.session_state.get("master_selected_years", [])
-    if mode == "Single year" and selected:
+    role = _active_time_role()
+    mode = str(st.session_state.get("master_time_scope", "LOM" if role == "Year" else "All months"))
+    selected = st.session_state.get("master_selected_time_values", [])
+    if mode in {"Single year", "Single month"} and selected:
         return str(selected[0])
-    if mode == "Custom years":
-        return "Custom years"
-    if mode == "All years":
-        return "All years"
-    return mode or "LOM"
+    if mode in {"Custom years", "Custom months"}:
+        return f"Custom {role.casefold()}s"
+    if mode in {"All years", "All months"}:
+        return f"All {role.casefold()}s"
+    return mode or ("LOM" if role == "Year" else "All months")
 
 
 def _metal_at_risk_display_unit(max_ounces: float) -> tuple[str, float, str]:
@@ -2744,23 +2965,23 @@ def _plot_metal_at_risk_by_bench(data: pd.DataFrame, config: ModelConfig) -> Non
     st.plotly_chart(fig, use_container_width=True)
 
 def _plot_stacked_by_year(data: pd.DataFrame, config: ModelConfig, color_role: str, title: str, color_map: dict[str, str], percent: bool = True) -> pd.DataFrame:
-    year_col = _year_column(config, data)
+    time_role = _active_time_role()
+    time_col = _time_column(config, data, time_role)
     color_col = config.column_for_role(color_role)
-    if not year_col or not color_col or year_col not in data.columns or color_col not in data.columns or data.empty:
-        st.info(f"Configure Year and {color_role} roles to activate this annual chart.")
+    if not time_col or not color_col or time_col not in data.columns or color_col not in data.columns or data.empty:
+        st.info(f"Configure {time_role} and {color_role} roles to activate this temporal chart.")
         return pd.DataFrame()
 
-    table = _group_tonnes(data, config, [year_col, color_col])
+    table = _group_tonnes(data, config, [time_col, color_col])
     if table.empty:
         return pd.DataFrame()
 
     ton_col = tonnage_column_name(config)
-    year_label = config.category_label(year_col)
+    time_label = config.category_label(time_col)
     color_label = config.category_label(color_col)
-    table = table.rename(columns={year_col: year_label, color_col: color_label})
-    table[year_label] = pd.to_numeric(table[year_label], errors="coerce")
-    table = table.dropna(subset=[year_label]).copy()
-    table[year_label] = table[year_label].astype(int)
+    table = table.rename(columns={time_col: time_label, color_col: color_label})
+    table[time_label] = table[time_label].map(lambda value: _time_display_value(value, time_role))
+    table = table[table[time_label].map(lambda value: bool(_time_value_key(value, time_role)))].copy()
 
     if color_role == "Category":
         table[color_label] = table[color_label].map(_display_resource_category)
@@ -2772,9 +2993,11 @@ def _plot_stacked_by_year(data: pd.DataFrame, config: ModelConfig, color_role: s
         table[color_label] = table[color_label].astype(str).str.strip().str.upper()
         category_orders = None
 
+    time_order = sorted(table[time_label].dropna().unique().tolist(), key=lambda value: _time_sort_key(value, time_role))
+    category_orders = {**(category_orders or {}), time_label: time_order}
     fig = px.bar(
         table,
-        x=year_label,
+        x=time_label,
         y=ton_col,
         color=color_label,
         title=title,
@@ -2791,7 +3014,10 @@ def _plot_stacked_by_year(data: pd.DataFrame, config: ModelConfig, color_role: s
         legend_title_text=color_label,
         margin={"l": 25, "r": 20, "t": 65, "b": 45},
     )
-    fig.update_xaxes(title_text="Year", dtick=1, tickformat=".0f")
+    if time_role == "Year" and all(isinstance(value, int) for value in time_order):
+        fig.update_xaxes(title_text="Year", dtick=1, tickformat=".0f")
+    else:
+        fig.update_xaxes(title_text=time_role, categoryorder="array", categoryarray=time_order)
     fig.update_traces(marker_line_width=0.5, marker_line_color="white")
     st.plotly_chart(fig, use_container_width=True)
     return table
@@ -2803,33 +3029,35 @@ def _render_year_distribution_section(
     destination_mode: str,
     filters: dict[str, Any] | None = None,
 ) -> None:
-    year_col = _year_column(config, data)
-    if not year_col or year_col not in data.columns:
-        st.info("Configure a Year column to activate annual distribution plots and tables.")
+    time_role = _active_time_role()
+    time_col = _time_column(config, data, time_role)
+    if not time_col or time_col not in data.columns:
+        st.info(f"Configure a {time_role} column to activate temporal distribution plots and tables.")
         return
 
-    st.markdown("#### Annual Distributions by Year")
+    role_lower = time_role.casefold()
+    st.markdown(f"#### Distributions by {time_role}")
     st.caption("These plots use the same master scope, sidebar filters and destination filter as the resource table above.")
 
-    tabs = st.tabs(["Mettype by year", "Category by year", "Destination by year"])
-    annual_specs = [
-        ("Mettype", f"Met-Type Ore Distribution by Year ({destination_mode})", METTYPE_COLORS),
-        ("Category", f"Resource Category Distribution by Year ({destination_mode})", RESOURCE_CATEGORY_COLORS),
-        ("Destination", f"Destination Distribution by Year ({destination_mode})", DESTINATION_COLORS),
+    tabs = st.tabs([f"Mettype by {role_lower}", f"Category by {role_lower}", f"Destination by {role_lower}"])
+    temporal_specs = [
+        ("Mettype", f"Met-Type Ore Distribution by {time_role} ({destination_mode})", METTYPE_COLORS),
+        ("Category", f"Resource Category Distribution by {time_role} ({destination_mode})", RESOURCE_CATEGORY_COLORS),
+        ("Destination", f"Destination Distribution by {time_role} ({destination_mode})", DESTINATION_COLORS),
     ]
 
-    for tab, (role, title, color_map) in zip(tabs, annual_specs, strict=True):
+    for tab, (role, title, color_map) in zip(tabs, temporal_specs, strict=True):
         with tab:
             table = _plot_stacked_by_year(data, config, role, title, color_map, percent=True)
             if not table.empty:
-                st.markdown("##### Annual table")
+                st.markdown(f"##### {time_role} table")
                 _render_barrick_table(table, config)
                 _render_table_filter_note(
                     _table_filter_note_items(
                         config,
                         final_data=data,
                         filters=filters,
-                        extra_items=[f"Annual grouping: {role} by Year"],
+                        extra_items=[f"Temporal grouping: {role} by {time_role}"],
                     )
                 )
 
@@ -3211,6 +3439,7 @@ def _valid_category_mask_for_validation(series: pd.Series) -> pd.Series:
 def _column_validation_checklist(data: pd.DataFrame, config: ModelConfig) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     year_col = _year_column(config, data)
+    month_col = _month_column(config, data)
     bench_col = config.column_for_role("Bench")
 
     for column in data.columns:
@@ -3254,6 +3483,20 @@ def _column_validation_checklist(data: pd.DataFrame, config: ModelConfig) -> pd.
                 details.append(f"<= 0 years: {non_positive:,}")
             if out_of_setup_range:
                 details.append(f"outside setup range {config.year_min}-{config.year_max}: {out_of_setup_range:,}")
+
+        elif column == month_col:
+            numeric = pd.to_numeric(series, errors="coerce")
+            if numeric.notna().any():
+                non_integer = int((numeric.dropna() % 1 != 0).sum())
+                outside_range = int(((numeric < 1) | (numeric > 12)).sum())
+                error_count += int(non_integer > 0) + int(outside_range > 0)
+                details.append(f"loaded range: {numeric.min():,.0f}-{numeric.max():,.0f}")
+                if non_integer:
+                    details.append(f"non-integer months: {non_integer:,}")
+                if outside_range:
+                    details.append(f"outside valid numeric month range 1-12: {outside_range:,}")
+            else:
+                details.append("text month labels accepted")
 
         elif column == bench_col:
             numeric = pd.to_numeric(series, errors="coerce")
@@ -3347,6 +3590,7 @@ def _grade_positive_statistics(data: pd.DataFrame, config: ModelConfig) -> pd.Da
 def _validation_control_summary(data: pd.DataFrame, config: ModelConfig) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     year_col = _year_column(config, data)
+    month_col = _month_column(config, data)
     bench_col = config.column_for_role("Bench")
     category_col = config.column_for_role("Category")
 
@@ -3360,6 +3604,29 @@ def _validation_control_summary(data: pd.DataFrame, config: ModelConfig) -> pd.D
                 "Flagged records": int((year.le(0) | year.isna() | (year < config.year_min) | (year > config.year_max)).sum()),
                 "Loaded range": f"{int(year.min())}-{int(year.max())}" if year.notna().any() else "N/A",
                 "Rule": f"numeric, positive, setup range {config.year_min}-{config.year_max}",
+            }
+        )
+
+    if month_col and month_col in data.columns:
+        month = data[month_col]
+        numeric_month = pd.to_numeric(month, errors="coerce")
+        if numeric_month.notna().any():
+            valid_month = numeric_month.notna() & numeric_month.between(1, 12) & numeric_month.mod(1).eq(0)
+            loaded_values = ", ".join(map(str, sorted(numeric_month.dropna().astype(int).unique().tolist())))
+            rule = "numeric integer from 1 to 12"
+        else:
+            text_month = month.astype("string").str.strip()
+            valid_month = text_month.notna() & text_month.ne("")
+            _, loaded_values = _series_unique_values(month)
+            rule = "non-blank text month labels"
+        rows.append(
+            {
+                "Control": "Month",
+                "Column": month_col,
+                "Valid records": int(valid_month.sum()),
+                "Flagged records": int((~valid_month).sum()),
+                "Loaded range": loaded_values or "N/A",
+                "Rule": rule,
             }
         )
 
@@ -3594,7 +3861,7 @@ def _render_validation_details(bundle: ModelBundle, model_name: str) -> None:
 
     control_summary = _validation_control_summary(bundle.data, config)
     if not control_summary.empty:
-        st.markdown("#### Year, bench and category controls")
+        st.markdown("#### Year/Month, bench and category controls")
         st.dataframe(
             control_summary,
             use_container_width=True,
@@ -3986,7 +4253,7 @@ def render_home() -> None:
             </div>
             <div class="pv-home-info-card">
                 <div class="pv-home-info-title">Transversal filters</div>
-                <div class="pv-home-info-text">Master filters for MetType, Phase, Bench and Year scope are applied consistently across evaluation, comparison and reports.</div>
+                <div class="pv-home-info-text">Master filters for MetType, Phase, Bench and Year/Month scope are applied consistently across evaluation, comparison and reports.</div>
             </div>
         </div>
         """,
@@ -4249,6 +4516,8 @@ def _configured_role_column(config: ModelConfig, data: pd.DataFrame, role: str) 
         return _phase_column(config, data)
     if role == "Year":
         return _year_column(config, data)
+    if role == "Month":
+        return _month_column(config, data)
     if role == "Block Model":
         return _block_model_column(config, data)
     column = config.column_for_role(role)
@@ -4263,6 +4532,7 @@ def _categorical_role_summary_rows(data: pd.DataFrame, config: ModelConfig) -> l
         "Pit_Phase",
         "Pit",
         "Year",
+        "Month",
         "Bench",
         "Category",
         "Destination",
@@ -4284,6 +4554,8 @@ def _categorical_role_summary_rows(data: pd.DataFrame, config: ModelConfig) -> l
         details = ""
         if role == "Year":
             details = f"Range: {_series_numeric_range(data[column])}"
+        elif role == "Month":
+            details = "Detected Month values"
         elif role == "Bench":
             details = f"Range: {_series_numeric_range(data[column])}"
         elif role in {"Phase", "Pit_Phase"}:
@@ -4347,6 +4619,11 @@ def _model_description_rows(model_name: str, raw_bundle: ModelBundle, scoped_bun
         count, _ = _series_unique_values(data[year_col])
         add("Years", f"{count:,}", f"Range: {_series_numeric_range(data[year_col])}; column: {year_col}")
 
+    month_col = _month_column(config, data)
+    if month_col and month_col in data.columns:
+        count, values = _series_unique_values(data[month_col])
+        add("Months", f"{count:,}", f"Values: {values}; column: {month_col}")
+
     phase_col = _phase_column(config, data)
     if phase_col and phase_col in data.columns:
         count, values = _series_unique_values(data[phase_col], natural_sort=True)
@@ -4376,6 +4653,7 @@ def _model_description_overview(scoped_bundles: dict[str, ModelBundle]) -> pd.Da
     for model_name, bundle in scoped_bundles.items():
         config = bundle.config
         year_col = _year_column(config, bundle.data)
+        month_col = _month_column(config, bundle.data)
         phase_col = _phase_column(config, bundle.data)
         bench_col = config.column_for_role("Bench")
         mettype_col = config.column_for_role("Mettype")
@@ -4397,6 +4675,8 @@ def _model_description_overview(scoped_bundles: dict[str, ModelBundle]) -> pd.Da
                 "Phases": unique_count(phase_col),
                 "Years": unique_count(year_col),
                 "Year range": _series_numeric_range(bundle.data[year_col]) if year_col and year_col in bundle.data.columns else "N/A",
+                "Months": unique_count(month_col),
+                "Month values": _series_unique_values(bundle.data[month_col])[1] if month_col and month_col in bundle.data.columns else "N/A",
                 "Benches": unique_count(bench_col),
                 "Bench range": _series_numeric_range(bundle.data[bench_col]) if bench_col and bench_col in bundle.data.columns else "N/A",
                 "Categories": unique_count(categ_col),
@@ -4465,6 +4745,7 @@ def _role_completeness_rows(model_name: str, bundle: ModelBundle) -> list[dict[s
         "Phase / Pit_Phase",
         "Pit",
         "Year",
+        "Month",
         "Bench",
         "Category",
         "Destination",
@@ -4478,6 +4759,8 @@ def _role_completeness_rows(model_name: str, bundle: ModelBundle) -> list[dict[s
             column = _phase_column(config, data)
         elif role == "Year":
             column = _year_column(config, data)
+        elif role == "Month":
+            column = _month_column(config, data)
         elif role == "Block Model":
             column = _block_model_column(config, data)
         else:
@@ -4505,7 +4788,7 @@ def _model_description_recommended_checks(scoped_bundles: dict[str, ModelBundle]
         use_container_width=True,
         hide_index=True,
     )
-    st.caption("Completeness (%) = non-null/non-blank records divided by rows after the active master BLK_MODEL, Year and Phase/Pit_Phase scope.")
+    st.caption("Completeness (%) = non-null/non-blank records divided by rows after the active master BLK_MODEL, Year/Month and Phase/Pit_Phase scope.")
 
 
 def render_model_description() -> None:
@@ -4523,8 +4806,29 @@ def render_model_description() -> None:
 
     st.markdown("### Model overview")
     overview = _model_description_overview(scoped_bundles)
+    overview_formatters = _table_number_formatters(overview, 3)
+
+    def format_count(value: Any) -> str:
+        if pd.isna(value) or value == "N/A":
+            return "N/A"
+        return f"{int(value):,}"
+
+    for count_column in [
+        "Rows after scope",
+        "Mettypes",
+        "Phases",
+        "Years",
+        "Months",
+        "Benches",
+        "Categories",
+        "Destinations",
+        "Grades",
+    ]:
+        if count_column in overview.columns:
+            overview_formatters[count_column] = format_count
+
     st.dataframe(
-        overview.style.format(_table_number_formatters(overview, 3), na_rep="N/A"),
+        overview.style.format(overview_formatters, na_rep="N/A"),
         use_container_width=True,
         hide_index=True,
     )
@@ -4636,7 +4940,7 @@ def render_evaluation() -> None:
         _render_variable_controls(bundle, model_name)
 
     with tabs[1]:
-        st.caption("Validation details are shown after the master BLK_MODEL, Year, Phase and Destination / Ore Type scope. Sidebar analytical filters are intended for evaluation charts and tables.")
+        st.caption("Validation details are shown after the master BLK_MODEL, Year/Month, Phase and Destination / Ore Type scope. Sidebar analytical filters are intended for evaluation charts and tables.")
         _render_validation_details(scoped_bundle, model_name)
 
     with tabs[2]:
@@ -5598,19 +5902,20 @@ def _ore_phase_chart_png(data: pd.DataFrame, config: ModelConfig, model_name: st
 
 
 def _year_role_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, model_name: str, destination_mode: str, color_map: dict[str, str], percent: bool = True) -> bytes | None:
-    year_col = _year_column(config, data)
+    time_role = _active_time_role()
+    time_col = _time_column(config, data, time_role)
     role_col = config.column_for_role(role)
-    if not year_col or not role_col or year_col not in data.columns or role_col not in data.columns or data.empty:
+    if not time_col or not role_col or time_col not in data.columns or role_col not in data.columns or data.empty:
         return None
-    table = _group_tonnes(data, config, [year_col, role_col])
+    table = _group_tonnes(data, config, [time_col, role_col])
     if table.empty:
         return None
     ton_col = tonnage_column_name(config)
-    table["Year"] = pd.to_numeric(table[year_col], errors="coerce")
-    table = table[table["Year"].notna()].copy()
+    table[time_role] = table[time_col].map(lambda value: _time_display_value(value, time_role))
+    table = table[table[time_role].map(lambda value: bool(_time_value_key(value, time_role)))].copy()
     if table.empty:
         return None
-    table["Year"] = table["Year"].astype(int).astype(str)
+    table[time_role] = table[time_role].astype(str)
     if role == "Category":
         table[role] = table[role_col].map(_display_resource_category)
         order_cols = RESOURCE_CATEGORY_ORDER
@@ -5620,9 +5925,9 @@ def _year_role_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, mod
     else:
         table[role] = table[role_col].astype(str).str.strip().str.upper()
         order_cols = sorted(table[role].dropna().astype(str).unique().tolist())
-    pivot = table.pivot_table(index="Year", columns=role, values=ton_col, aggfunc="sum", fill_value=0)
+    pivot = table.pivot_table(index=time_role, columns=role, values=ton_col, aggfunc="sum", fill_value=0)
     try:
-        pivot = pivot.loc[sorted(pivot.index.tolist(), key=lambda x: int(x))]
+        pivot = pivot.loc[sorted(pivot.index.tolist(), key=lambda value: _time_sort_key(value, time_role))]
     except Exception:
         pivot = pivot.sort_index()
     pivot = pivot[[col for col in order_cols if col in pivot.columns] + [col for col in pivot.columns if col not in order_cols]]
@@ -5633,7 +5938,7 @@ def _year_role_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, mod
     else:
         y_label = ton_col
     colors = [color_map.get(str(col), "#A5A5A5") for col in pivot.columns]
-    return _plot_png_from_pivot(pivot, f"{role} Distribution by Year - {model_name} ({destination_mode})", y_label, colors, stacked=True)
+    return _plot_png_from_pivot(pivot, f"{role} Distribution by {time_role} - {model_name} ({destination_mode})", y_label, colors, stacked=True)
 
 
 def _destination_bench_grade_chart_png(data: pd.DataFrame, config: ModelConfig, model_name: str, destination_mode: str) -> bytes | None:
@@ -5872,17 +6177,17 @@ def _automatic_report_charts(scoped_bundles: dict[str, ModelBundle]) -> list[dic
                 chart_notes("Ore destinations only, grouped by the unified Phase/Pit_Phase field."),
             ),
             (
-                f"Mettype by Year - {model_name}",
+                f"Mettype by {_active_time_role()} - {model_name}",
                 _year_role_chart_png(resource_data, bundle.config, "Mettype", model_name, destination_mode, METTYPE_COLORS, percent=True),
                 chart_notes("Annual distribution grouped by Mettype after all master filters."),
             ),
             (
-                f"Category by Year - {model_name}",
+                f"Category by {_active_time_role()} - {model_name}",
                 _year_role_chart_png(resource_data, bundle.config, "Category", model_name, destination_mode, RESOURCE_CATEGORY_COLORS, percent=True),
                 chart_notes("Annual distribution grouped by Resource Category after all master filters."),
             ),
             (
-                f"Destination by Year - {model_name}",
+                f"Destination by {_active_time_role()} - {model_name}",
                 _year_role_chart_png(resource_data, bundle.config, "Destination", model_name, destination_mode, DESTINATION_COLORS, percent=True),
                 chart_notes("Annual distribution grouped by Destination after all master filters."),
             ),
@@ -5956,7 +6261,7 @@ def _report_pdf_bytes(
     scope_bits = [
         f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"BLK_MODEL: {st.session_state.get('master_blk_model_scope', 'N/A')}",
-        f"Year: {_master_year_label()}",
+        f"{_active_time_role()}: {_master_time_label()}",
         f"Phase: {_master_phase_label()}",
         f"Destination / Ore Type: {_master_destination_label()}",
     ]
@@ -6112,7 +6417,7 @@ def render_reports() -> None:
         {"label": "Models", "value": f"{len(model_names):,}", "bg": "#D9E2F3", "border": "#AEBBD0"},
         {"label": "Tables", "value": f"{len(items):,}", "bg": "#E7E6E6", "border": "#C9C9C9"},
         {"label": "Charts", "value": f"{len(charts):,}", "bg": "#EFE5A1", "border": "#D6C45A"},
-        {"label": "Year scope", "value": _master_year_label(), "bg": "#E6F4EA", "border": "#70AD47"},
+        {"label": f"{_active_time_role()} scope", "value": _master_time_label(), "bg": "#E6F4EA", "border": "#70AD47"},
     ])
 
     preview = pd.DataFrame([
@@ -6129,7 +6434,7 @@ def render_reports() -> None:
     pdf_bytes = _report_pdf_bytes(items, charts, model_names, report_name)
 
     st.markdown("#### Download package")
-    st.caption("Both files use the same active model, year, phase and destination scope shown above.")
+    st.caption("Both files use the same active model, Year/Month, phase and destination scope shown above.")
     export_cols = st.columns(2)
     export_cols[0].download_button(
         "Download automatic Excel tables",
