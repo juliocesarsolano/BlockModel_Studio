@@ -1,5 +1,51 @@
+# =============================================================================
+# PV BLOCKMODEL STUDIO — USER INTERFACE PAGES
+# =============================================================================
+# File:        src/ui/pages.py
+# Project:     PV BlockModel Studio
+# Purpose:     Streamlit page rendering, model setup, validation, resource
+#              tabulation, model comparison and report preparation.
+#
+# Author:      Julio Solano
+# Profile:     Geological Engineer | Mineral Resource Evaluation |
+#              Geostatistics | Data Science | Data Analytics | GIS |
+#              Mining Applications
+# Context:     Mineral Resource Management — Pueblo Viejo
+#
+# Version:     1.0
+# Year:        2026
+# Review date: 2026-07-15
+# Copyright:   © 2026 Julio Solano. All rights reserved.
+#
+# MAINTENANCE PRINCIPLES
+# ----------------------
+# 1. Keep analytical formulas separate from presentation-only formatting.
+# 2. Apply master filters consistently before tables, charts and exports.
+# 3. Preserve mass-weighted grade calculations and contained-metal rules.
+# 4. Validate syntax and comparison-volume controls after every modification.
+# 5. Treat this application as a technical decision-support tool; official
+#    results require review by an appropriately qualified resource professional.
+#
+# DOCUMENTATION NOTE
+# ------------------
+# Comments in this file describe intent, scope and maintenance constraints.
+# They do not alter the analytical logic of the original functional version.
+# =============================================================================
+
 from __future__ import annotations
 
+# =============================================================================
+# PYTHON STANDARD LIBRARY
+# =============================================================================
+# base64: embed image assets directly in HTML.
+# html: safely escape dynamic text used in HTML fragments.
+# io: manage in-memory binary streams for exports.
+# re: normalize names, labels, roles and filenames with regular expressions.
+# uuid: create unique identifiers for generated UI/report elements.
+# datetime: define reporting and planning-year defaults.
+# replace: create updated dataclass instances without mutating originals.
+# Path: resolve project and asset paths portably.
+# Any: support flexible typing for heterogeneous Streamlit/Pandas values.
 import base64
 import html
 import io
@@ -10,6 +56,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+# =============================================================================
+# THIRD-PARTY DATA, CHARTING AND WEB-APPLICATION LIBRARIES
+# =============================================================================
+# pandas: tabular processing, grouping, styling and weighted calculations.
+# Plotly Express / Graph Objects: interactive analytical charts.
+# Streamlit: application layout, widgets, session state and downloads.
+# make_subplots: combined charts with multiple panels or secondary axes.
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -17,7 +70,14 @@ import streamlit as st
 import streamlit.components.v1 as components
 from plotly.subplots import make_subplots
 
+# =============================================================================
+# INTERNAL CORE MODULES
+# =============================================================================
+# Cleaning and validation establish the trusted analytical dataset.
 from src.core.cleaning import clean_model_data
+
+# Comparison utilities implement model compatibility checks, volume gates and
+# category/model summary comparisons.
 from src.core.comparison import (
     category_comparison_by_role,
     common_roles,
@@ -27,7 +87,11 @@ from src.core.comparison import (
     pairwise_volume_matrix,
     volume_gate_status,
 )
+
+# Input/output helpers load source tables and prepare Excel bytes.
 from src.core.io import dataframe_to_excel_bytes, load_dataframe
+
+# Metric functions centralize tonnage, volume, grade and contained-metal logic.
 from src.core.metrics import (
     PERIODS,
     apply_categorical_filters,
@@ -42,6 +106,9 @@ from src.core.metrics import (
     total_volume,
     weighted_mean,
 )
+
+# Domain models and configuration constants define the application's data
+# contracts, supported roles and display units.
 from src.core.models import (
     CATEGORY_ROLES,
     GRADE_UNITS,
@@ -54,9 +121,18 @@ from src.core.models import (
     ModelConfig,
     Scene,
 )
+
+# Parameter defaults provide centrally maintained aliases, validation rules and
+# display behavior.
 from src.core.parameters import cleaning_defaults, column_aliases, display_defaults, grade_defaults, master_filter_defaults, validation_defaults
+
+# Reporting functions generate Excel and PDF outputs from prepared scenes.
 from src.core.reports import scenes_to_excel, scenes_to_pdf
+
+# Model validation is reused after loading, filtering and control changes.
 from src.core.validation import validate_model
+
+# Shared UI utilities provide colors, formatting, navigation and master scope.
 from src.ui.common import CATEGORY_COLORS, MASTER_BLK_MODEL_OPTIONS, MODEL_COLORS, format_table, move_to, selected_master_blk_model_values
 
 
@@ -74,15 +150,25 @@ BARRICK_LOGO_B64 = """iVBORw0KGgoAAAANSUhEUgAAAbkAAABaCAYAAAAl8yiwAAAAAXNSR0IArs
 BARRICK_LOGO_DATA_URI = f"data:image/png;base64,{BARRICK_LOGO_B64}"
 
 
+
+# =============================================================================
+# BRANDING, PAGE HEADERS AND GENERAL UI HELPERS
+# =============================================================================
+# Function: _barrick_logo_html
+# Support the barrick logo html workflow.
 def _barrick_logo_html(width_px: int = 118) -> str:
     """Return a compact embedded Barrick logo for page headers and report preview cards."""
     return f'<img src="{BARRICK_LOGO_DATA_URI}" alt="Barrick" style="width:{width_px}px; height:auto; display:block;" />'
 
 
+# Function: _safe_key
+# Support the safe key workflow.
 def _safe_key(text: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in text)[:60]
 
 
+# Function: _default_index
+# Return the default index setting.
 def _default_index(options: list[str], candidates: list[str], fallback: int = 0) -> int:
     lowered = {option.casefold(): index for index, option in enumerate(options)}
     for candidate in candidates:
@@ -91,10 +177,14 @@ def _default_index(options: list[str], candidates: list[str], fallback: int = 0)
     return min(fallback, max(len(options) - 1, 0))
 
 
+# Function: _configured_max_grades
+# Resolve configured max grades values.
 def _configured_max_grades() -> int:
     return max(9, int(display_defaults().get("max_grade_variables", 9)))
 
 
+# Function: _display_report_title
+# Support the display report title workflow.
 def _display_report_title(title: str | None, fallback: str = "Resource Tabulation") -> str:
     clean = str(title or "").strip()
     if clean == "BM_Template Evaluation":
@@ -102,6 +192,8 @@ def _display_report_title(title: str | None, fallback: str = "Resource Tabulatio
     return clean or fallback
 
 
+# Function: _format_header_chip_text
+# Format values for header chip text display.
 def _format_header_chip_text(value: Any, max_chars: int = 34) -> str:
     """Keep page-header chips compact while preserving the analytical context."""
     text = str(value or "").strip()
@@ -110,6 +202,8 @@ def _format_header_chip_text(value: Any, max_chars: int = 34) -> str:
     return text if len(text) <= max_chars else text[: max_chars - 1].rstrip() + "…"
 
 
+# Function: _page_header_chips
+# Support the page header chips workflow.
 def _page_header_chips(title: str) -> list[tuple[str, str]]:
     """Build compact context chips for the executive dashboard page header."""
     chips: list[tuple[str, str]] = []
@@ -148,6 +242,8 @@ def _page_header_chips(title: str) -> list[tuple[str, str]]:
     return chips
 
 
+# Function: page_header
+# Support the page header workflow.
 def page_header(title: str, subtitle: str | None = None) -> None:
     """Premium executive dashboard header used consistently across app pages."""
     chips = _page_header_chips(title)
@@ -183,6 +279,8 @@ def page_header(title: str, subtitle: str | None = None) -> None:
     )
 
 
+# Function: _apply_premium_tab_styles
+# Apply premium tab styles rules to the working dataset.
 def _apply_premium_tab_styles() -> None:
     st.markdown(
         """
@@ -288,6 +386,12 @@ def _apply_premium_tab_styles() -> None:
     )
 
 
+
+# =============================================================================
+# COLUMN CLASSIFICATION, ROLE INFERENCE AND SETUP DEFAULTS
+# =============================================================================
+# Function: _column_name_tokens
+# Support the column name tokens workflow.
 def _column_name_tokens(column: str) -> tuple[str, str, list[str]]:
     normalized = re.sub(r"[^A-Z0-9]+", "_", str(column).upper()).strip("_")
     compact = normalized.replace("_", "")
@@ -295,6 +399,8 @@ def _column_name_tokens(column: str) -> tuple[str, str, list[str]]:
     return normalized, compact, tokens
 
 
+# Function: _is_contained_metal_column
+# Return whether the value satisfies the contained metal column rule.
 def _is_contained_metal_column(column: str) -> bool:
     normalized, compact, tokens = _column_name_tokens(column)
     lower = str(column).casefold()
@@ -307,6 +413,8 @@ def _is_contained_metal_column(column: str) -> bool:
     )
 
 
+# Function: _is_grade_accumulator_column
+# Return whether the value satisfies the grade accumulator column rule.
 def _is_grade_accumulator_column(column: str) -> bool:
     """Return True for grade x tonnes accumulator columns such as AUTON, CUTON, STON, CTON or AGTON."""
     normalized, compact, tokens = _column_name_tokens(column)
@@ -366,6 +474,8 @@ def _is_grade_accumulator_column(column: str) -> bool:
     return False
 
 
+# Function: _is_known_categorical_column_name
+# Return whether the value satisfies the known categorical column name rule.
 def _is_known_categorical_column_name(column: str) -> bool:
     normalized, compact, tokens = _column_name_tokens(column)
 
@@ -433,6 +543,8 @@ def _is_known_categorical_column_name(column: str) -> bool:
     return False
 
 
+# Function: _is_grade_like_column
+# Return whether the value satisfies the grade like column rule.
 def _is_grade_like_column(column: str) -> bool:
     if (
         _is_contained_metal_column(column)
@@ -523,6 +635,8 @@ def _is_grade_like_column(column: str) -> bool:
     return False
 
 
+# Function: _is_category_candidate
+# Return whether the value satisfies the category candidate rule.
 def _is_category_candidate(frame: pd.DataFrame, column: str) -> bool:
     if _is_setup_excluded_category_column(column) or _is_grade_like_column(column):
         return False
@@ -544,6 +658,8 @@ def _is_category_candidate(frame: pd.DataFrame, column: str) -> bool:
     return unique_count <= 100 and unique_count <= max(30, int(non_null * 0.20))
 
 
+# Function: _default_grade_unit
+# Return the default grade unit setting.
 def _default_grade_unit(column: str) -> str:
     normalized, compact, tokens = _column_name_tokens(column)
 
@@ -563,6 +679,8 @@ def _default_grade_unit(column: str) -> str:
     return "g/t"
 
 
+# Function: _default_grade_label
+# Return the default grade label setting.
 def _default_grade_label(column: str) -> str:
     labels = grade_defaults().get("default_labels", {})
     direct = labels.get(column, labels.get(str(column).upper()))
@@ -604,6 +722,8 @@ def _default_grade_label(column: str) -> str:
     return str(column)
 
 
+# Function: _infer_role
+# Support the infer role workflow.
 def _infer_role(column: str) -> str:
     normalized, compact, tokens = _column_name_tokens(column)
 
@@ -639,6 +759,8 @@ def _infer_role(column: str) -> str:
     return "Other"
 
 
+# Function: _suggest_grades
+# Support the suggest grades workflow.
 def _suggest_grades(columns: list[str]) -> list[str]:
     candidates = [column for column in columns if _is_grade_like_column(column)]
 
@@ -652,6 +774,8 @@ def _suggest_grades(columns: list[str]) -> list[str]:
     return ordered[:_configured_max_grades()]
 
 
+# Function: _suggest_categories
+# Support the suggest categories workflow.
 def _suggest_categories(frame: pd.DataFrame) -> list[str]:
     preferred = column_aliases().get("category_priority", [])
     present = [column for column in preferred if column in frame.columns and _is_category_candidate(frame, column)]
@@ -663,11 +787,15 @@ def _suggest_categories(frame: pd.DataFrame) -> list[str]:
     return (known + fallback)[:10]
 
 
+# Function: _is_setup_excluded_category_column
+# Return whether the value satisfies the setup excluded category column rule.
 def _is_setup_excluded_category_column(column: str) -> bool:
     normalized = str(column).strip().casefold().replace(" ", "_").replace("-", "_")
     return normalized in {"source", "src", "blk_model", "block_model", "bm_type"}
 
 
+# Function: _first_available_role
+# Support the first available role workflow.
 def _first_available_role(config: ModelConfig, roles: list[str]) -> str | None:
     for role in roles:
         column = config.column_for_role(role)
@@ -676,6 +804,12 @@ def _first_available_role(config: ModelConfig, roles: list[str]) -> str | None:
     return config.category_columns[0] if config.category_columns else None
 
 
+
+# =============================================================================
+# DISPLAY UNITS, KPI CARDS AND GENERIC TABLE HELPERS
+# =============================================================================
+# Function: _volume_display_divisor_and_label
+# Support the volume display divisor and label workflow.
 def _volume_display_divisor_and_label(unit: str | None) -> tuple[float, str]:
     """Return the divisor and display label used for volume summaries.
 
@@ -697,17 +831,23 @@ def _volume_display_divisor_and_label(unit: str | None) -> tuple[float, str]:
     return 1_000_000.0, "Mm3"
 
 
+# Function: _display_volume_total
+# Support the display volume total workflow.
 def _display_volume_total(data: pd.DataFrame, config: ModelConfig) -> tuple[float, str]:
     divisor, label = _volume_display_divisor_and_label(config.volume_unit)
     return total_volume(data, config) / divisor, label
 
 
+# Function: _format_volume_value
+# Format values for volume value display.
 def _format_volume_value(value: float | int | None) -> str:
     if value is None or pd.isna(value):
         return "N/A"
     return f"{float(value):,.0f}"
 
 
+# Function: _scale_volume_columns_for_display
+# Support the scale volume columns for display workflow.
 def _scale_volume_columns_for_display(table: pd.DataFrame, bundles: dict[str, ModelBundle] | None = None) -> pd.DataFrame:
     """Scale volume columns in generic validation/comparison tables for display only."""
     if table.empty:
@@ -732,6 +872,8 @@ def _scale_volume_columns_for_display(table: pd.DataFrame, bundles: dict[str, Mo
     return display
 
 
+# Function: _render_dashboard_kpi_cards
+# Render the dashboard kpi cards interface section.
 def _render_dashboard_kpi_cards(cards: list[dict[str, str]]) -> None:
     card_html = "".join(
         "<div class=\"bm-kpi-card\" "
@@ -792,6 +934,8 @@ def _render_dashboard_kpi_cards(cards: list[dict[str, str]]) -> None:
     )
 
 
+# Function: _metric_row
+# Support the metric row workflow.
 def _metric_row(bundle: ModelBundle, data: pd.DataFrame) -> None:
     config = bundle.config
     tonnage_value = total_tonnage(data, config) / {"t": 1, "Kt": 1_000, "Mt": 1_000_000}.get(config.tonnage_unit, 1_000_000)
@@ -813,6 +957,8 @@ def _metric_row(bundle: ModelBundle, data: pd.DataFrame) -> None:
     ])
 
 
+# Function: _resource_metric_row
+# Calculate or render metric row resource information.
 def _resource_metric_row(bundle: ModelBundle, data: pd.DataFrame) -> None:
     config = bundle.config
     tonnage_value = _metric_tonnage(data, config)
@@ -831,6 +977,8 @@ def _resource_metric_row(bundle: ModelBundle, data: pd.DataFrame) -> None:
         {"label": "Warnings", "value": f"{warning_count:,}", "bg": warning_bg, "border": warning_border},
     ])
 
+# Function: _filter_panel
+# Support the filter panel workflow.
 def _filter_panel(bundle: ModelBundle, key_prefix: str) -> tuple[pd.DataFrame, dict[str, list[Any]]]:
     data = bundle.data
     config = bundle.config
@@ -859,11 +1007,19 @@ def _filter_panel(bundle: ModelBundle, key_prefix: str) -> tuple[pd.DataFrame, d
     return apply_categorical_filters(data, selections), selections
 
 
+# Function: _add_scene_button
+# Support the add scene button workflow.
 def _add_scene_button(title: str, kind: str, model_names: list[str], table: pd.DataFrame, filters: dict[str, Any] | None = None) -> None:
     """Report Builder is now automatic; manual scene buttons are intentionally disabled."""
     return
 
 
+
+# =============================================================================
+# CORPORATE COLOR PALETTES AND MASTER FILTER CONSTANTS
+# =============================================================================
+# Function: _plot_tonnage_bar
+# Build and display the tonnage bar chart.
 def _plot_tonnage_bar(table: pd.DataFrame, x_col: str, ton_col: str, color_col: str | None = None, title: str = "Tonnage") -> None:
     if table.empty or x_col not in table.columns or ton_col not in table.columns:
         return
@@ -959,6 +1115,12 @@ DESTINATION_MODE_CODES = {
 }
 DESTINATION_CODE_ORDER = ["h1", "h2", "l1", "l2", "l3", "m1", "m2", "m3", "mw1", "mw2", "w1", "w2"]
 
+
+# =============================================================================
+# MASTER TIME, PHASE, DESTINATION AND GLOBAL-SCOPE FILTERS
+# =============================================================================
+# Function: _normalize_label
+# Support the normalize label workflow.
 def _normalize_label(value: Any) -> str:
     if pd.isna(value):
         return ""
@@ -969,6 +1131,8 @@ def _normalize_label(value: Any) -> str:
 
 
 
+# Function: _normalize_destination_code
+# Support the normalize destination code workflow.
 def _normalize_destination_code(value: Any) -> str:
     if pd.isna(value):
         return ""
@@ -976,11 +1140,15 @@ def _normalize_destination_code(value: Any) -> str:
     return text
 
 
+# Function: _display_destination
+# Support the display destination workflow.
 def _display_destination(value: Any) -> str:
     code = _normalize_destination_code(value)
     return code.upper() if code else ""
 
 
+# Function: _block_model_column
+# Support the block model column workflow.
 def _block_model_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
     configured = config.column_for_role("Block Model")
     if configured and configured in data.columns:
@@ -991,6 +1159,8 @@ def _block_model_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
     return None
 
 
+# Function: _year_column
+# Support the year column workflow.
 def _year_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
     configured = config.column_for_role("Year")
     if configured and configured in data.columns:
@@ -1001,6 +1171,8 @@ def _year_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
     return None
 
 
+# Function: _month_column
+# Support the month column workflow.
 def _month_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
     configured = config.column_for_role("Month")
     if configured and configured in data.columns:
@@ -1013,16 +1185,22 @@ def _month_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
     return None
 
 
+# Function: _active_time_role
+# Support the active time role workflow.
 def _active_time_role() -> str:
     role = str(st.session_state.get("master_time_role", "Year"))
     return role if role in {"Year", "Month"} else "Year"
 
 
+# Function: _time_column
+# Support the time column workflow.
 def _time_column(config: ModelConfig, data: pd.DataFrame, role: str | None = None) -> str | None:
     selected_role = role or _active_time_role()
     return _month_column(config, data) if selected_role == "Month" else _year_column(config, data)
 
 
+# Function: _time_roles_for_bundles
+# Support the time roles for bundles workflow.
 def _time_roles_for_bundles(bundles: list[ModelBundle]) -> list[str]:
     roles: list[str] = []
     if any(_year_column(bundle.config, bundle.data) for bundle in bundles):
@@ -1032,6 +1210,8 @@ def _time_roles_for_bundles(bundles: list[ModelBundle]) -> list[str]:
     return roles
 
 
+# Function: _month_name_number
+# Support the month name number workflow.
 def _month_name_number(value: str) -> int | None:
     month_numbers = {
         "jan": 1, "january": 1, "ene": 1, "enero": 1,
@@ -1050,11 +1230,15 @@ def _month_name_number(value: str) -> int | None:
     return month_numbers.get(value.casefold().strip().rstrip("."))
 
 
+# Function: _normalize_two_digit_year
+# Support the normalize two digit year workflow.
 def _normalize_two_digit_year(year: int) -> int:
     """Interpret two-digit planning years as 2000-2099 (for example, 26 -> 2026)."""
     return 2000 + year if 0 <= year < 100 else year
 
 
+# Function: _parse_month_year
+# Support the parse month year workflow.
 def _parse_month_year(value: Any) -> tuple[int, int] | None:
     """Parse Month-Year labels such as Aug-26, Aug26, Agosto-2026 or Ago27."""
     if pd.isna(value):
@@ -1080,6 +1264,8 @@ def _parse_month_year(value: Any) -> tuple[int, int] | None:
     return None
 
 
+# Function: _time_value_key
+# Support the time value key workflow.
 def _time_value_key(value: Any, role: str) -> str:
     if pd.isna(value):
         return ""
@@ -1106,6 +1292,8 @@ def _time_value_key(value: Any, role: str) -> str:
     return " ".join(text.split()).casefold()
 
 
+# Function: _time_display_value
+# Support the time display value workflow.
 def _time_display_value(value: Any, role: str) -> Any:
     key = _time_value_key(value, role)
     if not key:
@@ -1121,6 +1309,8 @@ def _time_display_value(value: Any, role: str) -> Any:
         return " ".join(str(value).strip().split())
 
 
+# Function: _time_sort_key
+# Support the time sort key workflow.
 def _time_sort_key(value: Any, role: str) -> tuple[Any, ...]:
     key = _time_value_key(value, role)
     if role == "Month":
@@ -1135,6 +1325,8 @@ def _time_sort_key(value: Any, role: str) -> tuple[Any, ...]:
     except ValueError:
         return (2, key)
 
+# Function: _available_time_values_for_bundles
+# Collect available time values for bundles values.
 def _available_time_values_for_bundles(bundles: list[ModelBundle], role: str) -> list[Any]:
     values_by_key: dict[str, Any] = {}
     for bundle in bundles:
@@ -1148,6 +1340,8 @@ def _available_time_values_for_bundles(bundles: list[ModelBundle], role: str) ->
     return sorted(values_by_key.values(), key=lambda value: _time_sort_key(value, role))
 
 
+# Function: _years_from_master_scope
+# Support the years from master scope workflow.
 def _years_from_master_scope(available_years: list[int]) -> list[int]:
     if not available_years:
         return []
@@ -1170,6 +1364,8 @@ def _years_from_master_scope(available_years: list[int]) -> list[int]:
     return [year for year in available_years if start_year <= year <= end_year]
 
 
+# Function: _master_time_label
+# Resolve the active master time label setting.
 def _master_time_label() -> str:
     role = _active_time_role()
     mode = str(st.session_state.get("master_time_scope", "LOM" if role == "Year" else "All months"))
@@ -1189,11 +1385,15 @@ def _master_time_label() -> str:
     return "All available months"
 
 
+# Function: _master_year_label
+# Resolve the active master year label setting.
 def _master_year_label() -> str:
     """Backward-compatible alias used by existing report builders."""
     return _master_time_label()
 
 
+# Function: _render_master_year_filter_sidebar
+# Render the master year filter sidebar interface section.
 def _render_master_year_filter_sidebar(bundles: list[ModelBundle], key_prefix: str) -> list[Any]:
     time_roles = _time_roles_for_bundles(bundles)
     if not time_roles:
@@ -1387,6 +1587,8 @@ def _render_master_year_filter_sidebar(bundles: list[ModelBundle], key_prefix: s
     )
     return selected_values
 
+# Function: _phase_column
+# Support the phase column workflow.
 def _phase_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
     """Return one unified mining-phase column, accepting either Phase or Pit_Phase roles."""
     for role in ["Phase", "Pit_Phase"]:
@@ -1403,6 +1605,8 @@ def _phase_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
     return None
 
 
+# Function: _natural_phase_sort_key
+# Support the natural phase sort key workflow.
 def _natural_phase_sort_key(value: Any) -> tuple[Any, ...]:
     text = str(value).strip()
     parts = re.split(r"(\d+)", text)
@@ -1415,6 +1619,8 @@ def _natural_phase_sort_key(value: Any) -> tuple[Any, ...]:
     return tuple(key)
 
 
+# Function: _available_phases_for_bundles
+# Collect available phases for bundles values.
 def _available_phases_for_bundles(bundles: list[ModelBundle]) -> list[str]:
     phases: set[str] = set()
     for bundle in bundles:
@@ -1426,6 +1632,8 @@ def _available_phases_for_bundles(bundles: list[ModelBundle]) -> list[str]:
     return sorted(phases, key=_natural_phase_sort_key)
 
 
+# Function: _master_phase_label
+# Resolve the active master phase label setting.
 def _master_phase_label() -> str:
     selected = [str(value) for value in st.session_state.get("master_selected_phases", []) if str(value).strip()]
     available = [str(value) for value in st.session_state.get("master_available_phases", []) if str(value).strip()]
@@ -1436,6 +1644,8 @@ def _master_phase_label() -> str:
     return _format_filter_note_value(selected, max_items=12)
 
 
+# Function: _render_master_phase_filter_sidebar
+# Render the master phase filter sidebar interface section.
 def _render_master_phase_filter_sidebar(bundles: list[ModelBundle], key_prefix: str) -> list[str]:
     available_phases = _available_phases_for_bundles(bundles)
     st.session_state.master_available_phases = available_phases
@@ -1469,6 +1679,8 @@ def _render_master_phase_filter_sidebar(bundles: list[ModelBundle], key_prefix: 
     return st.session_state.master_selected_phases
 
 
+# Function: _destination_sort_key
+# Support the destination sort key workflow.
 def _destination_sort_key(code: str) -> tuple[int, str]:
     normalized = _normalize_destination_code(code)
     try:
@@ -1477,6 +1689,8 @@ def _destination_sort_key(code: str) -> tuple[int, str]:
         return len(DESTINATION_CODE_ORDER), normalized
 
 
+# Function: _available_destination_codes_for_bundles
+# Collect available destination codes for bundles values.
 def _available_destination_codes_for_bundles(bundles: list[ModelBundle]) -> list[str]:
     detected: set[str] = set()
     for bundle in bundles:
@@ -1488,6 +1702,8 @@ def _available_destination_codes_for_bundles(bundles: list[ModelBundle]) -> list
     return sorted(detected, key=_destination_sort_key)
 
 
+# Function: _master_destination_mode
+# Resolve the active master destination mode setting.
 def _master_destination_mode() -> str:
     mode = str(st.session_state.get("master_destination_mode", DEFAULT_DESTINATION_MODE))
     if mode == LEGACY_DESTINATION_CUSTOM_MODE:
@@ -1495,6 +1711,8 @@ def _master_destination_mode() -> str:
     return mode if mode in DESTINATION_MODE_OPTIONS else DEFAULT_DESTINATION_MODE
 
 
+# Function: _master_destination_label
+# Resolve the active master destination label setting.
 def _master_destination_label() -> str:
     mode = _master_destination_mode()
     if mode == DESTINATION_SINGLE_MODE:
@@ -1510,6 +1728,8 @@ def _master_destination_label() -> str:
     return mode
 
 
+# Function: _render_master_destination_filter_sidebar
+# Render the master destination filter sidebar interface section.
 def _render_master_destination_filter_sidebar(bundles: list[ModelBundle], key_prefix: str) -> str:
     available_codes = _available_destination_codes_for_bundles(bundles)
     if not available_codes:
@@ -1605,6 +1825,8 @@ def _render_master_destination_filter_sidebar(bundles: list[ModelBundle], key_pr
     st.sidebar.caption(f"Destination / Ore Type applied: **{applied_label}**")
     return applied_label
 
+# Function: _valid_destination_mask
+# Support the valid destination mask workflow.
 def _valid_destination_mask(data: pd.DataFrame, config: ModelConfig) -> pd.Series:
     dest_col = config.column_for_role("Destination")
     if not dest_col or dest_col not in data.columns:
@@ -1613,6 +1835,9 @@ def _valid_destination_mask(data: pd.DataFrame, config: ModelConfig) -> pd.Serie
     return normalized.isin(VALID_DESTINATIONS)
 
 
+# Function: _apply_global_scope
+# Apply transversal BLK_MODEL, Destination, Year/Month and Phase filters before
+# any downstream calculation, chart or resource table.
 def _apply_global_scope(data: pd.DataFrame, config: ModelConfig) -> pd.DataFrame:
     """Apply transverse app rules before any calculations, tables or plots."""
     if data.empty:
@@ -1650,12 +1875,16 @@ def _apply_global_scope(data: pd.DataFrame, config: ModelConfig) -> pd.DataFrame
     return filtered
 
 
+# Function: _scoped_bundle
+# Support the scoped bundle workflow.
 def _scoped_bundle(bundle: ModelBundle) -> ModelBundle:
     data = _apply_global_scope(bundle.data, bundle.config)
     validation = validate_model(data, bundle.config)
     return replace(bundle, data=data, validation=validation)
 
 
+# Function: _scope_caption
+# Support the scope caption workflow.
 def _scope_caption(data_before: pd.DataFrame, data_after: pd.DataFrame, config: ModelConfig) -> None:
     blk_col = _block_model_column(config, data_before)
     dest_col = config.column_for_role("Destination")
@@ -1674,6 +1903,8 @@ def _scope_caption(data_before: pd.DataFrame, data_after: pd.DataFrame, config: 
     st.caption(" | ".join(parts))
 
 
+# Function: _format_filter_note_value
+# Format values for filter note value display.
 def _format_filter_note_value(value: Any, max_items: int = 10) -> str:
     if value is None:
         return "Not applied"
@@ -1693,6 +1924,8 @@ def _format_filter_note_value(value: Any, max_items: int = 10) -> str:
     return str(value)
 
 
+# Function: _table_filter_note_items
+# Support the table filter note items workflow.
 def _table_filter_note_items(
     config: ModelConfig,
     source_data: pd.DataFrame | None = None,
@@ -1741,6 +1974,8 @@ def _table_filter_note_items(
     return items
 
 
+# Function: _render_table_filter_note
+# Render the table filter note interface section.
 def _render_table_filter_note(items: list[str] | None) -> None:
     if not items:
         return
@@ -1769,6 +2004,8 @@ def _render_table_filter_note(items: list[str] | None) -> None:
     )
 
 
+# Function: _comparison_filter_note_items
+# Prepare filter note items comparison information.
 def _comparison_filter_note_items(
     bundles: dict[str, ModelBundle],
     selected_model_names: list[str],
@@ -1798,6 +2035,8 @@ def _comparison_filter_note_items(
     return items
 
 
+# Function: _configured_models_inventory
+# Resolve configured models inventory values.
 def _configured_models_inventory() -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for name, bundle in st.session_state.models.items():
@@ -1816,6 +2055,8 @@ def _configured_models_inventory() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+# Function: _render_configured_models_manager
+# Render the configured models manager interface section.
 def _render_configured_models_manager(key_prefix: str = "setup") -> None:
     st.markdown("### Configured Models")
     if not st.session_state.models:
@@ -1848,6 +2089,12 @@ def _render_configured_models_manager(key_prefix: str = "setup") -> None:
         st.success(f"Model '{model_to_delete}' deleted.")
         st.rerun()
 
+
+# =============================================================================
+# RESOURCE CATEGORY, GRADE AND CONTAINED-METAL LOGIC
+# =============================================================================
+# Function: _display_resource_category
+# Support the display resource category workflow.
 def _display_resource_category(value: Any) -> str:
     numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
     if pd.notna(numeric):
@@ -1879,6 +2126,8 @@ def _display_resource_category(value: Any) -> str:
         return "Unclassified"
     return str(value) if pd.notna(value) else "Unclassified"
 
+# Function: _category_mask
+# Support the category mask workflow.
 def _category_mask(data: pd.DataFrame, column: str | None, category_key: str) -> pd.Series:
     if not column or column not in data.columns:
         return pd.Series(False, index=data.index)
@@ -1902,6 +2151,8 @@ def _category_mask(data: pd.DataFrame, column: str | None, category_key: str) ->
     return pd.Series(False, index=data.index)
 
 
+# Function: _is_grade_control_category_column
+# Return whether the value satisfies the grade control category column rule.
 def _is_grade_control_category_column(column: str | None) -> bool:
     if not column:
         return False
@@ -1910,11 +2161,15 @@ def _is_grade_control_category_column(column: str | None) -> bool:
     return normalized in {"categ_gc", "category_gc", "resource_category_gc"} or compact in {"categgc", "categorygc"}
 
 
+# Function: _is_contained_metal_spec
+# Return whether the value satisfies the contained metal spec rule.
 def _is_contained_metal_spec(spec: GradeSpec) -> bool:
     text = f"{spec.column} {spec.label}".casefold()
     return any(token in text for token in ["oz", "ounce", "ounces", "contained"])
 
 
+# Function: _grade_name_tokens
+# Support the grade name tokens workflow.
 def _grade_name_tokens(spec: GradeSpec) -> tuple[str, str]:
     raw_label = str(spec.label or spec.column).strip()
     raw_column = str(spec.column).strip()
@@ -1923,6 +2178,8 @@ def _grade_name_tokens(spec: GradeSpec) -> tuple[str, str]:
     return normalized, compact
 
 
+# Function: _canonical_grade_label
+# Support the canonical grade label workflow.
 def _canonical_grade_label(spec: GradeSpec) -> str:
     normalized, compact = _grade_name_tokens(spec)
     tokens = [token for token in normalized.split("_") if token]
@@ -1984,6 +2241,8 @@ def _canonical_grade_label(spec: GradeSpec) -> str:
     return str(spec.label or spec.column).strip()
 
 
+# Function: _effective_grade_unit
+# Support the effective grade unit workflow.
 def _effective_grade_unit(spec: GradeSpec) -> str:
     label = _canonical_grade_label(spec)
     normalized, compact = _grade_name_tokens(spec)
@@ -2004,12 +2263,16 @@ def _effective_grade_unit(spec: GradeSpec) -> str:
     return configured_unit or "g/t"
 
 
+# Function: _resource_grade_header
+# Calculate or render grade header resource information.
 def _resource_grade_header(spec: GradeSpec) -> str:
     label = _canonical_grade_label(spec)
     unit = _effective_grade_unit(spec)
     return f"{label} ({unit})"
 
 
+# Function: _preferred_grade_specs
+# Support the preferred grade specs workflow.
 def _preferred_grade_specs(config: ModelConfig) -> list[GradeSpec]:
     preferred = ["Au", "AuCN", "Ag", "Cu", "CuT", "CuCN", "Stot", "S2", "Ctot", "OC", "CaO", "SiO2", "Al2O3"]
     available = [spec for spec in config.grade_specs if not _is_contained_metal_spec(spec)]
@@ -2026,10 +2289,15 @@ def _preferred_grade_specs(config: ModelConfig) -> list[GradeSpec]:
     return specs[:_configured_max_grades()]
 
 
+# Function: _find_metal_grade_spec
+# Locate the configured metal grade spec item.
 def _find_metal_grade_spec(specs: list[GradeSpec], metal_label: str) -> GradeSpec | None:
     return next((spec for spec in specs if _canonical_grade_label(spec).casefold() == metal_label.casefold()), None)
 
 
+# Function: _resource_row
+# Calculate one resource-category row using mass-weighted grades and contained
+# metal rules for Au, Ag and Cu.
 def _resource_row(label: str, subset: pd.DataFrame, config: ModelConfig, specs: list[GradeSpec]) -> dict[str, Any]:
     ton_col = f"Tonnes ({config.tonnage_unit})"
     mass = subset[config.mass_column].clip(lower=0) if config.mass_column in subset.columns else pd.Series(dtype=float)
@@ -2055,6 +2323,9 @@ def _resource_row(label: str, subset: pd.DataFrame, config: ModelConfig, specs: 
         row["Cu (lb)"] = float("nan")
     return row
 
+# Function: _resource_tabulation
+# Build the category resource table, including Grade Control when CATEG_GC is
+# configured, followed by M&I, Total and Grand Total aggregations.
 def _resource_tabulation(data: pd.DataFrame, config: ModelConfig) -> pd.DataFrame:
     specs = _preferred_grade_specs(config)
     category_col = config.column_for_role("Category")
@@ -2090,6 +2361,8 @@ def _resource_tabulation(data: pd.DataFrame, config: ModelConfig) -> pd.DataFram
     return pd.DataFrame(rows)
 
 
+# Function: _barrick_number_formatters
+# Support the barrick number formatters workflow.
 def _barrick_number_formatters(table: pd.DataFrame, config: ModelConfig) -> dict[str, str]:
     formatters: dict[str, str] = {}
     for column in table.columns:
@@ -2107,11 +2380,15 @@ def _barrick_number_formatters(table: pd.DataFrame, config: ModelConfig) -> dict
     return formatters
 
 
+# Function: _is_year_like_column
+# Return whether the value satisfies the year like column rule.
 def _is_year_like_column(column: Any) -> bool:
     normalized = re.sub(r"[^a-z0-9]+", "_", str(column).casefold()).strip("_")
     return normalized in {"year", "years", "anio", "ano"} or normalized.endswith("_year")
 
 
+# Function: _table_number_formatters
+# Support the table number formatters workflow.
 def _table_number_formatters(table: pd.DataFrame, precision: int = 3) -> dict[str, str]:
     formatters: dict[str, str] = {}
     for column in table.columns:
@@ -2125,6 +2402,8 @@ def _table_number_formatters(table: pd.DataFrame, precision: int = 3) -> dict[st
     return formatters
 
 
+# Function: _left_aligned_table_style
+# Support the left aligned table style workflow.
 def _left_aligned_table_style(
     table: pd.DataFrame,
     *,
@@ -2143,6 +2422,8 @@ def _left_aligned_table_style(
     )
 
 
+# Function: _centered_table_style
+# Support the centered table style workflow.
 def _centered_table_style(
     table: pd.DataFrame,
     *,
@@ -2162,6 +2443,8 @@ def _centered_table_style(
     )
 
 
+# Function: _text_table_column_config
+# Support the text table column config workflow.
 def _text_table_column_config(
     table: pd.DataFrame,
     *,
@@ -2198,6 +2481,8 @@ def _text_table_column_config(
     return config
 
 
+# Function: _render_barrick_table
+# Render the barrick table interface section.
 def _render_barrick_table(table: pd.DataFrame, config: ModelConfig) -> None:
     if table.empty:
         st.info("No data available for the current filters.")
@@ -2226,10 +2511,14 @@ def _render_barrick_table(table: pd.DataFrame, config: ModelConfig) -> None:
     st.markdown(f'<div class="bm-table-wrap">{styler.to_html()}</div>', unsafe_allow_html=True)
 
 
+# Function: _metric_tonnage
+# Support the metric tonnage workflow.
 def _metric_tonnage(data: pd.DataFrame, config: ModelConfig) -> float:
     return total_tonnage(data, config) / tonnage_divisor(config.tonnage_unit)
 
 
+# Function: _resource_calculation_audit
+# Calculate or render calculation audit resource information.
 def _resource_calculation_audit(source_data: pd.DataFrame, scoped_data: pd.DataFrame, final_data: pd.DataFrame, config: ModelConfig, destination_mode: str) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     ton_col = f"Tonnes ({config.tonnage_unit})"
@@ -2276,6 +2565,8 @@ PRIMARY_ORE_DESTINATION_CODES = ["h1", "h2", "l1", "l2", "l3"]
 OPTIONAL_ORE_DESTINATION_CODES = ["m1", "m2", "m3"]
 
 
+# Function: _data_by_destination_codes
+# Support the data by destination codes workflow.
 def _data_by_destination_codes(data: pd.DataFrame, config: ModelConfig, codes: list[str]) -> pd.DataFrame:
     dest_col = config.column_for_role("Destination")
     if not dest_col or dest_col not in data.columns or data.empty:
@@ -2284,33 +2575,45 @@ def _data_by_destination_codes(data: pd.DataFrame, config: ModelConfig, codes: l
     return data[normalized.isin(codes)].copy()
 
 
+# Function: _tonnes_for_frame
+# Support the tonnes for frame workflow.
 def _tonnes_for_frame(data: pd.DataFrame, config: ModelConfig) -> float:
     if data.empty or config.mass_column not in data.columns:
         return 0.0
     return float(pd.to_numeric(data[config.mass_column], errors="coerce").fillna(0).clip(lower=0).sum())
 
 
+# Function: _display_tonnage_value
+# Support the display tonnage value workflow.
 def _display_tonnage_value(tonnes: float, config: ModelConfig) -> float:
     return tonnes / tonnage_divisor(config.tonnage_unit)
 
 
+# Function: _format_destination_value
+# Format values for destination value display.
 def _format_destination_value(value: float | int | None, decimals: int = 3) -> str:
     if value is None or pd.isna(value):
         return "-"
     return f"{float(value):,.{decimals}f}"
 
 
+# Function: _format_grade_value
+# Format values for grade value display.
 def _format_grade_value(value: float | int | None, decimals: int) -> str:
     if value is None or pd.isna(value):
         return "-"
     return f"{float(value):,.{decimals}f}"
 
 
+# Function: _spec_by_canonical_label
+# Support the spec by canonical label workflow.
 def _spec_by_canonical_label(config: ModelConfig, label: str) -> GradeSpec | None:
     specs = _preferred_grade_specs(config)
     return next((spec for spec in specs if _canonical_grade_label(spec).casefold() == label.casefold()), None)
 
 
+# Function: _weighted_grade_for_label
+# Support the weighted grade for label workflow.
 def _weighted_grade_for_label(data: pd.DataFrame, config: ModelConfig, label: str) -> tuple[str, float | None]:
     spec = _spec_by_canonical_label(config, label)
     if not spec or spec.column not in data.columns or data.empty:
@@ -2318,6 +2621,8 @@ def _weighted_grade_for_label(data: pd.DataFrame, config: ModelConfig, label: st
     return _effective_grade_unit(spec), weighted_mean(data[spec.column], data[config.mass_column])
 
 
+# Function: _contained_ounces_for_label
+# Support the contained ounces for label workflow.
 def _contained_ounces_for_label(data: pd.DataFrame, config: ModelConfig, label: str) -> float | None:
     spec = _spec_by_canonical_label(config, label)
     if not spec or spec.column not in data.columns or data.empty:
@@ -2329,6 +2634,13 @@ def _contained_ounces_for_label(data: pd.DataFrame, config: ModelConfig, label: 
     return float(value) if unit == "oz" else None
 
 
+
+# =============================================================================
+# VERTICAL DESTINATION TABULATION AND PHASE CHARTS
+# =============================================================================
+# Function: _destination_summary_table
+# Build the vertical destination table for ore, waste, strip ratio, weighted
+# grades and contained Au/Ag metal.
 def _destination_summary_table(data: pd.DataFrame, config: ModelConfig, model_name: str) -> pd.DataFrame:
     dest_col = config.column_for_role("Destination")
     value_col = model_name or "Model Name"
@@ -2401,7 +2713,11 @@ def _destination_summary_table(data: pd.DataFrame, config: ModelConfig, model_na
     return pd.DataFrame(rows)
 
 
-def _render_destination_summary_table(table: pd.DataFrame) -> None:
+# Function: _render_destination_summary_table
+# Render the vertical destination table used by evaluation and comparison.
+# ``compact=True`` changes presentation density only; calculations and values
+# remain identical to the standard table.
+def _render_destination_summary_table(table: pd.DataFrame, *, compact: bool = False) -> None:
     if table.empty:
         st.info("No destination summary can be calculated for the current filters.")
         return
@@ -2417,6 +2733,11 @@ def _render_destination_summary_table(table: pd.DataFrame) -> None:
             return ["border-top:1px solid #D9E2EC;" for _ in row]
         return ["" for _ in row]
 
+    # The same renderer is used in evaluation and comparison. The comparison
+    # page can request a denser layout because several model columns are shown.
+    table_font_size = "0.74rem" if compact else "0.86rem"
+    cell_padding = "2px 4px" if compact else "4px 7px"
+
     styler = (
         visible.style
         .hide(axis="index")
@@ -2425,16 +2746,18 @@ def _render_destination_summary_table(table: pd.DataFrame) -> None:
         .set_table_styles(
             [
                 {"selector": "th", "props": [("background-color", "#005A87"), ("color", "white"), ("font-weight", "800"), ("text-align", "center")]},
-                {"selector": "td", "props": [("border", "1px solid #D9E2EC"), ("padding", "4px 7px"), ("text-align", "right")]},
+                {"selector": "td", "props": [("border", "1px solid #D9E2EC"), ("padding", cell_padding), ("text-align", "right")]},
                 {"selector": "td:first-child", "props": [("text-align", "left")]},
                 {"selector": "td:nth-child(2)", "props": [("text-align", "center")]},
-                {"selector": "table", "props": [("border-collapse", "collapse"), ("width", "auto"), ("font-size", "0.86rem")]},
+                {"selector": "table", "props": [("border-collapse", "collapse"), ("width", "auto"), ("font-size", table_font_size)]},
             ]
         )
     )
     st.markdown(f'<div class="bm-table-wrap">{styler.to_html()}</div>', unsafe_allow_html=True)
 
 
+# Function: _plot_ore_kt_by_phase
+# Build and display the ore kt by phase chart.
 def _plot_ore_kt_by_phase(data: pd.DataFrame, config: ModelConfig, model_name: str) -> None:
     phase_col = _phase_column(config, data)
     dest_col = config.column_for_role("Destination")
@@ -2478,6 +2801,8 @@ def _plot_ore_kt_by_phase(data: pd.DataFrame, config: ModelConfig, model_name: s
     st.plotly_chart(fig, use_container_width=True)
 
 
+# Function: _comparison_ore_kt_by_phase_table
+# Prepare ore kt by phase table comparison information.
 def _comparison_ore_kt_by_phase_table(bundles: dict[str, ModelBundle], selected_model_names: list[str]) -> pd.DataFrame:
     """Return ore tonnes by unified Phase/Pit_Phase and model, scaled to Kt."""
     rows: list[dict[str, Any]] = []
@@ -2519,6 +2844,8 @@ def _comparison_ore_kt_by_phase_table(bundles: dict[str, ModelBundle], selected_
     return table.sort_values(["Phase", "Model"]).reset_index(drop=True)
 
 
+# Function: _plot_comparison_ore_kt_by_phase
+# Build and display the comparison ore kt by phase chart.
 def _plot_comparison_ore_kt_by_phase(bundles: dict[str, ModelBundle], selected_model_names: list[str]) -> None:
     table = _comparison_ore_kt_by_phase_table(bundles, selected_model_names)
     if table.empty:
@@ -2555,6 +2882,8 @@ def _plot_comparison_ore_kt_by_phase(bundles: dict[str, ModelBundle], selected_m
     st.plotly_chart(fig, use_container_width=True)
 
 
+# Function: _render_resource_by_destination
+# Render the resource by destination interface section.
 def _render_resource_by_destination(
     bundle: ModelBundle,
     model_name: str,
@@ -2591,6 +2920,8 @@ def _render_resource_by_destination(
     _plot_ore_kt_by_phase(filtered, config, model_name)
 
 
+# Function: _destination_table_with_row_keys
+# Support the destination table with row keys workflow.
 def _destination_table_with_row_keys(table: pd.DataFrame) -> pd.DataFrame:
     """Add stable row keys so repeated labels such as h1 under tonnes and metal sections align correctly."""
     if table.empty:
@@ -2614,6 +2945,8 @@ def _destination_table_with_row_keys(table: pd.DataFrame) -> pd.DataFrame:
     return keyed
 
 
+# Function: _numeric_from_destination_value
+# Support the numeric from destination value workflow.
 def _numeric_from_destination_value(value: Any) -> float | None:
     """Convert table display values back to numbers for relative-difference calculations."""
     if value is None or pd.isna(value):
@@ -2628,6 +2961,8 @@ def _numeric_from_destination_value(value: Any) -> float | None:
         return None
 
 
+# Function: _format_relative_difference_pct
+# Format values for relative difference pct display.
 def _format_relative_difference_pct(value: Any, reference_value: Any) -> str:
     value_number = _numeric_from_destination_value(value)
     reference_number = _numeric_from_destination_value(reference_value)
@@ -2638,6 +2973,8 @@ def _format_relative_difference_pct(value: Any, reference_value: Any) -> str:
     return f"{((value_number - reference_number) / reference_number) * 100:,.0f}%"
 
 
+# Function: _add_relative_difference_columns
+# Support the add relative difference columns workflow.
 def _add_relative_difference_columns(rows: list[dict[str, Any]], model_names: list[str], reference_model_name: str | None) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame()
@@ -2664,6 +3001,9 @@ def _add_relative_difference_columns(rows: list[dict[str, Any]], model_names: li
     return table[[column for column in ordered_columns if column in table.columns]]
 
 
+# Function: _destination_comparison_table
+# Align destination rows across selected models and append relative-difference
+# columns against the chosen reference model.
 def _destination_comparison_table(bundles: dict[str, ModelBundle], reference_model_name: str | None = None) -> pd.DataFrame:
     """Build the vertical destination table with one value column per selected model plus Δ% columns vs reference."""
     row_meta: dict[str, dict[str, Any]] = {}
@@ -2734,6 +3074,9 @@ def _destination_comparison_table(bundles: dict[str, ModelBundle], reference_mod
     return _add_relative_difference_columns(rows, model_names, reference_model_name)
 
 
+# Function: _render_comparison_resource_by_destination
+# Render the multi-model destination comparison and reference-model Δ% columns.
+# The compact table call is intentionally limited to Model Comparison.
 def _render_comparison_resource_by_destination(bundles: dict[str, ModelBundle], selected_model_names: list[str]) -> None:
     st.subheader("Tabulation by Destination")
     st.caption("Select the reference model used to calculate the relative difference columns. Δ% = (model - reference) / reference × 100.")
@@ -2752,7 +3095,9 @@ def _render_comparison_resource_by_destination(bundles: dict[str, ModelBundle], 
         st.info("No destination comparison table can be calculated for the selected models and filters.")
         return
 
-    _render_destination_summary_table(table)
+    # Comparison-only compact rendering: smaller text and tighter cell padding
+    # prevent the vertical table from becoming unnecessarily wide.
+    _render_destination_summary_table(table, compact=True)
     _render_table_filter_note(
         _comparison_filter_note_items(
             bundles,
@@ -2773,6 +3118,12 @@ def _render_comparison_resource_by_destination(bundles: dict[str, ModelBundle], 
     _plot_comparison_ore_kt_by_phase(bundles, selected_model_names)
 
 
+
+# =============================================================================
+# EVALUATION FILTERS AND RESOURCE DASHBOARD RENDERING
+# =============================================================================
+# Function: _dashboard_filters
+# Support the dashboard filters workflow.
 def _dashboard_filters(bundle: ModelBundle, key_prefix: str) -> tuple[pd.DataFrame, dict[str, list[Any]]]:
     """Backward-compatible filter helper kept for older pages."""
     config = bundle.config
@@ -2786,6 +3137,8 @@ def _dashboard_filters(bundle: ModelBundle, key_prefix: str) -> tuple[pd.DataFra
     return apply_categorical_filters(data, filters), filters
 
 
+# Function: _sidebar_evaluation_filters
+# Support the sidebar evaluation filters workflow.
 def _sidebar_evaluation_filters(bundle: ModelBundle, key_prefix: str, base_data: pd.DataFrame | None = None) -> tuple[pd.DataFrame, dict[str, Any]]:
     config = bundle.config
     data = base_data.copy() if base_data is not None else bundle.data.copy()
@@ -2841,6 +3194,8 @@ def _sidebar_evaluation_filters(bundle: ModelBundle, key_prefix: str, base_data:
     return filtered, filters
 
 
+# Function: _apply_destination_mode
+# Apply destination mode rules to the working dataset.
 def _apply_destination_mode(data: pd.DataFrame, config: ModelConfig, mode: str) -> pd.DataFrame:
     dest_col = config.column_for_role("Destination")
     if not dest_col or dest_col not in data.columns or data.empty:
@@ -2865,6 +3220,8 @@ def _apply_destination_mode(data: pd.DataFrame, config: ModelConfig, mode: str) 
     dest_code = data[dest_col].map(_normalize_destination_code)
     return data[dest_code.isin(selected_codes)]
 
+# Function: _bench_order
+# Support the bench order workflow.
 def _bench_order(values: pd.Series) -> list[Any]:
     clean = [value for value in values.dropna().unique().tolist()]
     try:
@@ -2873,6 +3230,8 @@ def _bench_order(values: pd.Series) -> list[Any]:
         return sorted(clean, key=lambda x: str(x), reverse=True)
 
 
+# Function: _group_tonnes
+# Support the group tonnes workflow.
 def _group_tonnes(data: pd.DataFrame, config: ModelConfig, group_cols: list[str]) -> pd.DataFrame:
     cols = [col for col in group_cols if col and col in data.columns]
     if not cols or data.empty:
@@ -2884,10 +3243,14 @@ def _group_tonnes(data: pd.DataFrame, config: ModelConfig, group_cols: list[str]
     return table.drop(columns=[config.mass_column])
 
 
+# Function: _plot_mettype_distribution
+# Build and display the mettype distribution chart.
 def _plot_mettype_distribution(data: pd.DataFrame, config: ModelConfig) -> None:
     _plot_role_distribution(data, config, "Mettype", "Met-Type Ore Tonnes Distribution", METTYPE_COLORS)
 
 
+# Function: _plot_role_distribution
+# Build and display the role distribution chart.
 def _plot_role_distribution(data: pd.DataFrame, config: ModelConfig, role: str, title: str, color_map: dict[str, str]) -> None:
     role_col = config.column_for_role(role)
     if not role_col or role_col not in data.columns or data.empty:
@@ -2921,6 +3284,8 @@ def _plot_role_distribution(data: pd.DataFrame, config: ModelConfig, role: str, 
     fig.update_layout(height=370, margin={"l": 20, "r": 20, "t": 60, "b": 20})
     st.plotly_chart(fig, use_container_width=True)
 
+# Function: _plot_stacked_by_bench
+# Build and display the stacked by bench chart.
 def _plot_stacked_by_bench(data: pd.DataFrame, config: ModelConfig, color_role: str, title: str, color_map: dict[str, str], percent: bool = True) -> None:
     bench_col = config.column_for_role("Bench")
     color_col = config.column_for_role(color_role)
@@ -2984,6 +3349,8 @@ def _plot_stacked_by_bench(data: pd.DataFrame, config: ModelConfig, color_role: 
 
 
 
+# Function: _active_year_scope_short_label
+# Support the active year scope short label workflow.
 def _active_year_scope_short_label() -> str:
     role = _active_time_role()
     mode = str(st.session_state.get("master_time_scope", "LOM" if role == "Year" else "All months"))
@@ -2997,6 +3364,8 @@ def _active_year_scope_short_label() -> str:
     return mode or ("LOM" if role == "Year" else "All months")
 
 
+# Function: _metal_at_risk_display_unit
+# Support the metal at risk display unit workflow.
 def _metal_at_risk_display_unit(max_ounces: float) -> tuple[str, float, str]:
     """Return a dynamic Au-ounce display unit for the selected period and filters."""
     if max_ounces >= 1_000_000:
@@ -3006,6 +3375,8 @@ def _metal_at_risk_display_unit(max_ounces: float) -> tuple[str, float, str]:
     return "oz", 1.0, ",.0f"
 
 
+# Function: _plot_metal_at_risk_by_bench
+# Build and display the metal at risk by bench chart.
 def _plot_metal_at_risk_by_bench(data: pd.DataFrame, config: ModelConfig) -> None:
     bench_col = config.column_for_role("Bench")
     category_col = config.column_for_role("Category")
@@ -3153,6 +3524,8 @@ def _plot_metal_at_risk_by_bench(data: pd.DataFrame, config: ModelConfig) -> Non
     )
     st.plotly_chart(fig, use_container_width=True)
 
+# Function: _plot_stacked_by_year
+# Build and display the stacked by year chart.
 def _plot_stacked_by_year(data: pd.DataFrame, config: ModelConfig, color_role: str, title: str, color_map: dict[str, str], percent: bool = True) -> pd.DataFrame:
     time_role = _active_time_role()
     time_col = _time_column(config, data, time_role)
@@ -3212,6 +3585,8 @@ def _plot_stacked_by_year(data: pd.DataFrame, config: ModelConfig, color_role: s
     return table
 
 
+# Function: _render_year_distribution_section
+# Render the year distribution section interface section.
 def _render_year_distribution_section(
     data: pd.DataFrame,
     config: ModelConfig,
@@ -3251,6 +3626,8 @@ def _render_year_distribution_section(
                 )
 
 
+# Function: _plot_destination_by_bench_with_grade
+# Build and display the destination by bench with grade chart.
 def _plot_destination_by_bench_with_grade(data: pd.DataFrame, config: ModelConfig) -> None:
     bench_col = config.column_for_role("Bench")
     dest_col = config.column_for_role("Destination")
@@ -3357,6 +3734,8 @@ def _plot_destination_by_bench_with_grade(data: pd.DataFrame, config: ModelConfi
         pass
     st.plotly_chart(fig, use_container_width=True)
 
+# Function: _render_variable_controls
+# Render the variable controls interface section.
 def _render_variable_controls(bundle: ModelBundle, model_name: str) -> None:
     config = bundle.config
     st.subheader("Variables and data controls")
@@ -3462,6 +3841,8 @@ def _render_variable_controls(bundle: ModelBundle, model_name: str) -> None:
     )
 
 
+# Function: _render_resource_dashboard
+# Render the resource dashboard interface section.
 def _render_resource_dashboard(
     bundle: ModelBundle,
     model_name: str,
@@ -3577,6 +3958,12 @@ def _render_resource_dashboard(
     _render_year_distribution_section(filtered, config, destination_mode, filters)
 
 
+
+# =============================================================================
+# VALIDATION CHECKLISTS, DIAGNOSTICS AND DISTRIBUTION PLOTS
+# =============================================================================
+# Function: _validation_status
+# Support the validation status workflow.
 def _validation_status(error_count: int = 0, warning_count: int = 0) -> str:
     if error_count > 0:
         return "WARNING"
@@ -3585,6 +3972,8 @@ def _validation_status(error_count: int = 0, warning_count: int = 0) -> str:
     return "OK"
 
 
+# Function: _zero_value_mask
+# Support the zero value mask workflow.
 def _zero_value_mask(series: pd.Series) -> pd.Series:
     numeric = pd.to_numeric(series, errors="coerce")
     text = series.astype("string").str.strip().str.lower()
@@ -3599,6 +3988,8 @@ def _zero_value_mask(series: pd.Series) -> pd.Series:
     ).fillna(False)
 
 
+# Function: _configured_column_role
+# Resolve configured column role values.
 def _configured_column_role(config: ModelConfig, column: str) -> str:
     if column == config.mass_column:
         return "Mass"
@@ -3612,6 +4003,8 @@ def _configured_column_role(config: ModelConfig, column: str) -> str:
     return "Other"
 
 
+# Function: _valid_category_mask_for_validation
+# Support the valid category mask for validation workflow.
 def _valid_category_mask_for_validation(series: pd.Series) -> pd.Series:
     numeric = pd.to_numeric(series, errors="coerce")
     normalized = series.map(_normalize_label)
@@ -3625,6 +4018,8 @@ def _valid_category_mask_for_validation(series: pd.Series) -> pd.Series:
     return numeric.isin([15, 1, 2, 3, 4]) | text_valid
 
 
+# Function: _column_validation_checklist
+# Support the column validation checklist workflow.
 def _column_validation_checklist(data: pd.DataFrame, config: ModelConfig) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     year_col = _year_column(config, data)
@@ -3747,6 +4142,8 @@ def _column_validation_checklist(data: pd.DataFrame, config: ModelConfig) -> pd.
     return pd.DataFrame(rows)
 
 
+# Function: _grade_positive_statistics
+# Support the grade positive statistics workflow.
 def _grade_positive_statistics(data: pd.DataFrame, config: ModelConfig) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
 
@@ -3776,6 +4173,8 @@ def _grade_positive_statistics(data: pd.DataFrame, config: ModelConfig) -> pd.Da
     return pd.DataFrame(rows)
 
 
+# Function: _validation_control_summary
+# Support the validation control summary workflow.
 def _validation_control_summary(data: pd.DataFrame, config: ModelConfig) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     year_col = _year_column(config, data)
@@ -3849,6 +4248,8 @@ def _validation_control_summary(data: pd.DataFrame, config: ModelConfig) -> pd.D
     return pd.DataFrame(rows)
 
 
+# Function: _histogram_stats_text
+# Support the histogram stats text workflow.
 def _histogram_stats_text(values: pd.Series) -> str:
     if values.empty:
         return "n: 0"
@@ -3870,6 +4271,8 @@ def _histogram_stats_text(values: pd.Series) -> str:
     )
 
 
+# Function: _render_grade_distribution_multiplot
+# Render the grade distribution multiplot interface section.
 def _render_grade_distribution_multiplot(data: pd.DataFrame, config: ModelConfig, model_name: str) -> None:
     available_specs = [
         spec
@@ -4001,6 +4404,8 @@ def _render_grade_distribution_multiplot(data: pd.DataFrame, config: ModelConfig
         )
 
 
+# Function: _render_validation_details
+# Render the validation details interface section.
 def _render_validation_details(bundle: ModelBundle, model_name: str) -> None:
     config = bundle.config
     st.subheader("Validation details")
@@ -4103,6 +4508,8 @@ def _render_validation_details(bundle: ModelBundle, model_name: str) -> None:
 # -----------------------------------------------------------------------------
 
 
+# Function: _setup_step
+# Support the setup step workflow.
 def _setup_step(step: int, title: str, description: str) -> None:
     """Render a consistent visual landmark without changing setup behavior."""
     st.markdown(
@@ -4119,6 +4526,12 @@ def _setup_step(step: int, title: str, description: str) -> None:
     )
 
 
+
+# =============================================================================
+# SHARED PAGE STATES AND MODEL SETUP WORKFLOW
+# =============================================================================
+# Function: _render_no_models_state
+# Render the no models state interface section.
 def _render_no_models_state(message: str, minimum: int = 1) -> None:
     """Consistent empty state for analytical pages."""
     noun = "model" if minimum == 1 else "models"
@@ -4138,6 +4551,8 @@ def _render_no_models_state(message: str, minimum: int = 1) -> None:
         move_to("Model Setup")
 
 
+# Function: _render_active_model_strip
+# Render the active model strip interface section.
 def _render_active_model_strip(model_name: str, bundle: ModelBundle) -> None:
     """Display existing model/session facts without changing analytical scope."""
     validation_label = "Review required" if bundle.validation.is_blocked else "Ready"
@@ -4154,6 +4569,8 @@ def _render_active_model_strip(model_name: str, bundle: ModelBundle) -> None:
     )
 
 
+# Function: _render_volume_gate_state
+# Render the volume gate state interface section.
 def _render_volume_gate_state(passed: bool, message: str, model_count: int, tolerance: float) -> None:
     state_class = "is-passed" if passed else "is-review"
     state_label = "Passed" if passed else "Review required"
@@ -4175,6 +4592,12 @@ def _render_volume_gate_state(passed: bool, message: str, model_count: int, tole
     )
 
 
+
+# =============================================================================
+# TOP-LEVEL STREAMLIT PAGE RENDERERS
+# =============================================================================
+# Function: render_home
+# Render the home application page.
 def render_home() -> None:
     st.markdown(
         f"""
@@ -4480,6 +4903,8 @@ def render_home() -> None:
             )
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
+# Function: render_setup
+# Render model upload, variable mapping, units and validation configuration.
 def render_setup() -> None:
     page_header("Model Setup", "Load a block-model tabulation and map the variables required for analysis.")
 
@@ -4682,6 +5107,8 @@ def render_setup() -> None:
         st.session_state.setup_uploader_version = uploader_version + 1
         st.rerun()
 
+# Function: _series_unique_values
+# Support the series unique values workflow.
 def _series_unique_values(series: pd.Series, max_items: int = 14, natural_sort: bool = False) -> tuple[int, str]:
     clean = series.dropna().astype(str).str.strip()
     clean = clean[clean.ne("")]
@@ -4699,6 +5126,8 @@ def _series_unique_values(series: pd.Series, max_items: int = 14, natural_sort: 
     return len(values), ", ".join(map(str, preview)) + suffix
 
 
+# Function: _series_numeric_range
+# Support the series numeric range workflow.
 def _series_numeric_range(series: pd.Series, decimals: int = 0) -> str:
     numeric = pd.to_numeric(series, errors="coerce").dropna()
     if numeric.empty:
@@ -4708,6 +5137,8 @@ def _series_numeric_range(series: pd.Series, decimals: int = 0) -> str:
     return f"{numeric.min():,.{decimals}f} to {numeric.max():,.{decimals}f}"
 
 
+# Function: _configured_role_column
+# Resolve configured role column values.
 def _configured_role_column(config: ModelConfig, data: pd.DataFrame, role: str) -> str | None:
     if role in {"Phase", "Pit_Phase"}:
         return _phase_column(config, data)
@@ -4721,6 +5152,8 @@ def _configured_role_column(config: ModelConfig, data: pd.DataFrame, role: str) 
     return column if column and column in data.columns else None
 
 
+# Function: _categorical_role_summary_rows
+# Support the categorical role summary rows workflow.
 def _categorical_role_summary_rows(data: pd.DataFrame, config: ModelConfig) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     roles_to_report = [
@@ -4786,6 +5219,8 @@ def _categorical_role_summary_rows(data: pd.DataFrame, config: ModelConfig) -> l
     return rows
 
 
+# Function: _model_description_rows
+# Support the model description rows workflow.
 def _model_description_rows(model_name: str, raw_bundle: ModelBundle, scoped_bundle: ModelBundle) -> list[dict[str, Any]]:
     config = raw_bundle.config
     data = scoped_bundle.data
@@ -4845,6 +5280,8 @@ def _model_description_rows(model_name: str, raw_bundle: ModelBundle, scoped_bun
     return rows
 
 
+# Function: _model_description_overview
+# Support the model description overview workflow.
 def _model_description_overview(scoped_bundles: dict[str, ModelBundle]) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for model_name, bundle in scoped_bundles.items():
@@ -4885,11 +5322,15 @@ def _model_description_overview(scoped_bundles: dict[str, ModelBundle]) -> pd.Da
     return pd.DataFrame(rows)
 
 
+# Function: _blank_value_count
+# Support the blank value count workflow.
 def _blank_value_count(series: pd.Series) -> int:
     text = series.astype("string").str.strip()
     return int(text.isna().sum() + text.eq("").sum())
 
 
+# Function: _role_completeness_rows
+# Support the role completeness rows workflow.
 def _role_completeness_rows(model_name: str, bundle: ModelBundle) -> list[dict[str, Any]]:
     config = bundle.config
     data = bundle.data
@@ -4967,6 +5408,8 @@ def _role_completeness_rows(model_name: str, bundle: ModelBundle) -> list[dict[s
     return rows
 
 
+# Function: _model_description_recommended_checks
+# Support the model description recommended checks workflow.
 def _model_description_recommended_checks(scoped_bundles: dict[str, ModelBundle]) -> None:
     st.markdown("#### Additional Model Description/Checks")
     st.caption("Completeness by role highlights whether the core and categorical fields required for evaluation/comparison are populated after the active master scope.")
@@ -4988,6 +5431,8 @@ def _model_description_recommended_checks(scoped_bundles: dict[str, ModelBundle]
     st.caption("Completeness (%) = non-null/non-blank records divided by rows after the active master BLK_MODEL, Year/Month and Phase/Pit_Phase scope.")
 
 
+# Function: render_model_description
+# Render the model description application page.
 def render_model_description() -> None:
     page_header("Model description", "Summarize configured model structure, categorical filters and scope before evaluation or comparison.")
     if not st.session_state.models:
@@ -5104,11 +5549,15 @@ def render_model_description() -> None:
         _model_description_recommended_checks(scoped_bundles)
 
 
+# Function: render_quality
+# Render the quality application page.
 def render_quality() -> None:
     """Backward-compatible route: old Data Quality page now renders Model Description."""
     render_model_description()
 
 
+# Function: render_evaluation
+# Render single-model validation and resource-tabulation workflows.
 def render_evaluation() -> None:
     _apply_premium_tab_styles()
     page_header("Model Evaluation", "Configure data controls and review the resource tabulation dashboard for one model.")
@@ -5156,12 +5605,16 @@ FIVE_YEAR_FILTER_ROLES = [
 ]
 
 
+# Function: _five_year_filter_column
+# Prepare filter column five-year comparison information.
 def _five_year_filter_column(config: ModelConfig, data: pd.DataFrame, role: str) -> str | None:
     if role == "Phase":
         return _phase_column(config, data)
     return config.column_for_role(role)
 
 
+# Function: _five_year_filter_options
+# Prepare filter options five-year comparison information.
 def _five_year_filter_options(bundles: dict[str, ModelBundle], role: str) -> list[str]:
     values: set[str] = set()
     for bundle in bundles.values():
@@ -5175,6 +5628,8 @@ def _five_year_filter_options(bundles: dict[str, ModelBundle], role: str) -> lis
     return sorted(values, key=lambda value: value.casefold())
 
 
+# Function: _comparison_year_series
+# Prepare year series comparison information.
 def _comparison_year_series(data: pd.DataFrame, config: ModelConfig) -> pd.Series:
     """Return planning year from Year, falling back to year encoded in Month labels."""
     result = pd.Series(pd.NA, index=data.index, dtype="Int64")
@@ -5195,6 +5650,8 @@ def _comparison_year_series(data: pd.DataFrame, config: ModelConfig) -> pd.Serie
     return result
 
 
+# Function: _apply_five_year_independent_filters
+# Apply five year independent filters rules to the working dataset.
 def _apply_five_year_independent_filters(
     bundle: ModelBundle,
     source_values: list[int],
@@ -5221,6 +5678,8 @@ def _apply_five_year_independent_filters(
     return data
 
 
+# Function: _five_year_ounce_matrix
+# Prepare ounce matrix five-year comparison information.
 def _five_year_ounce_matrix(
     bundle: ModelBundle,
     metal_label: str,
@@ -5266,6 +5725,13 @@ def _five_year_ounce_matrix(
     return matrix, None
 
 
+
+# =============================================================================
+# FIVE-YEAR AU/AG OUNCE COMPARISON
+# =============================================================================
+# Function: _format_ounce_table_value
+# Format ounce values as whole numbers and preserve accounting-style
+# parentheses for negative differences.
 def _format_ounce_table_value(value: Any) -> str:
     if value is None or pd.isna(value):
         return "-"
@@ -5274,14 +5740,39 @@ def _format_ounce_table_value(value: Any) -> str:
     return f"({rounded:,})" if numeric < 0 else f"{rounded:,}"
 
 
+# Function: _ore_ounce_table_style
+# Style five-year Au/Ag matrices with centered headers/cells and red negative
+# text while retaining parentheses and the Grand Total highlight.
 def _ore_ounce_table_style(matrix: pd.DataFrame) -> pd.io.formats.style.Styler:
+    # Reset the index so Year becomes a visible column and can share the same
+    # centering rules as every destination/content column.
     display = matrix.reset_index()
     numeric_columns = [column for column in display.columns if column != "Year"]
     formatters = {column: _format_ounce_table_value for column in numeric_columns}
 
+    def negative_text_style(column: pd.Series) -> list[str]:
+        """Return red text for negative values while preserving parentheses."""
+        numeric = pd.to_numeric(column, errors="coerce")
+        return [
+            "color:#C00000;" if pd.notna(value) and float(value) < 0 else ""
+            for value in numeric
+        ]
+
     styler = display.style.format(formatters, na_rep="-")
-    styler = styler.set_properties(subset=["Year"], **{"text-align": "center"})
-    styler = styler.set_properties(subset=numeric_columns, **{"text-align": "right"})
+
+    # Headers and all body cells are centered to improve visual comparison
+    # across the five-year matrices.
+    styler = styler.set_properties(**{"text-align": "center"})
+
+    # Negative values remain formatted with parentheses by
+    # ``_format_ounce_table_value`` and are additionally emphasized in red.
+    if numeric_columns:
+        styler = styler.apply(
+            negative_text_style,
+            subset=numeric_columns,
+            axis=0,
+        )
+
     styler = styler.set_table_styles(
         [
             {
@@ -5294,9 +5785,18 @@ def _ore_ounce_table_style(matrix: pd.DataFrame) -> pd.io.formats.style.Styler:
                     ("border", "1px solid #D3D9DD"),
                 ],
             },
-            {"selector": "td", "props": [("border", "1px solid #D3D9DD")]},
+            {
+                "selector": "td",
+                "props": [
+                    ("border", "1px solid #D3D9DD"),
+                    ("text-align", "center"),
+                ],
+            },
         ]
     )
+
+    # Grand Total keeps the established highlight without overriding negative
+    # red text applied at the individual-cell level.
     return styler.apply(
         lambda row: [
             "font-weight: 700; background-color: #F3EFE4;"
@@ -5308,6 +5808,8 @@ def _ore_ounce_table_style(matrix: pd.DataFrame) -> pd.io.formats.style.Styler:
     )
 
 
+# Function: _render_ore_ounce_matrix
+# Render the ore ounce matrix interface section.
 def _render_ore_ounce_matrix(title: str, matrix: pd.DataFrame) -> None:
     st.markdown(f"*{title}*")
     st.dataframe(
@@ -5317,6 +5819,8 @@ def _render_ore_ounce_matrix(title: str, matrix: pd.DataFrame) -> None:
     )
 
 
+# Function: _stable_comparison_multiselect
+# Support the stable comparison multiselect workflow.
 def _stable_comparison_multiselect(
     label: str,
     options: list[str],
@@ -5332,6 +5836,9 @@ def _stable_comparison_multiselect(
     return st.multiselect(label, options, key=key, help=help_text)
 
 
+# Function: _render_five_year_ore_comparison
+# Render the independent five-year Au/Ag workflow. Its local controls
+# intentionally do not inherit the master time, phase or destination filters.
 def _render_five_year_ore_comparison(
     raw_bundles: dict[str, ModelBundle],
     selected_model_names: list[str],
@@ -5479,6 +5986,8 @@ def _render_five_year_ore_comparison(
                         difference,
                     )
 
+# Function: render_comparison
+# Render Model Comparison after enforcing the mandatory global-volume gate.
 def render_comparison() -> None:
     _apply_premium_tab_styles()
     page_header("Model Comparison", "Compare two or more configured models after the mandatory global-volume check.")
@@ -5603,6 +6112,12 @@ def render_comparison() -> None:
 # -----------------------------------------------------------------------------
 
 
+
+# =============================================================================
+# AUTOMATIC REPORTING, EXCEL AND PDF HELPERS
+# =============================================================================
+# Function: _report_model_label
+# Prepare model label information for reporting.
 def _report_model_label(model_names: list[str]) -> str:
     if not model_names:
         return "No configured models"
@@ -5613,16 +6128,22 @@ def _report_model_label(model_names: list[str]) -> str:
     return ", ".join(model_names[:3]) + f", +{len(model_names) - 3} more"
 
 
+# Function: _report_file_slug
+# Prepare file slug information for reporting.
 def _report_file_slug(text_value: str, fallback: str = "block_model_report") -> str:
     slug = re.sub(r"[^A-Za-z0-9]+", "_", str(text_value or fallback)).strip("_").lower()
     return slug[:70] or fallback
 
 
+# Function: _report_destination_mode_for_model
+# Prepare destination mode for model information for reporting.
 def _report_destination_mode_for_model(model_name: str) -> str:
     # Kept for backward compatibility with the reporting code; destination scope is now global.
     return _master_destination_label()
 
 
+# Function: _report_table_sheet_name
+# Prepare table sheet name information for reporting.
 def _report_table_sheet_name(base: str, used: set[str]) -> str:
     clean = re.sub(r"[\\/*?:\[\]]", "_", str(base)).strip() or "Sheet"
     clean = clean[:31]
@@ -5636,6 +6157,8 @@ def _report_table_sheet_name(base: str, used: set[str]) -> str:
     return candidate
 
 
+# Function: _report_table_item
+# Prepare table item information for reporting.
 def _report_table_item(
     title: str,
     table: pd.DataFrame,
@@ -5654,10 +6177,14 @@ def _report_table_item(
     }
 
 
+# Function: _notes_frame
+# Support the notes frame workflow.
 def _notes_frame(notes: list[str]) -> pd.DataFrame:
     return pd.DataFrame({"Notes": [f"{index}. {note}" for index, note in enumerate(notes, start=1)]})
 
 
+# Function: _five_year_report_dataframe
+# Prepare report dataframe five-year comparison information.
 def _five_year_report_dataframe(matrix: pd.DataFrame) -> pd.DataFrame:
     """Return a report-ready copy of a five-year ounce matrix."""
     table = matrix.reset_index().copy()
@@ -5668,6 +6195,8 @@ def _five_year_report_dataframe(matrix: pd.DataFrame) -> pd.DataFrame:
     return table
 
 
+# Function: _five_year_report_items
+# Prepare report items five-year comparison information.
 def _five_year_report_items(raw_bundles: dict[str, ModelBundle]) -> list[dict[str, Any]]:
     """Collect the independent five-year Au/Ag content and difference tables for exports."""
     if len(raw_bundles) < 2:
@@ -5801,6 +6330,8 @@ def _five_year_report_items(raw_bundles: dict[str, ModelBundle]) -> list[dict[st
     return items
 
 
+# Function: _automatic_report_tables
+# Support the automatic report tables workflow.
 def _automatic_report_tables(scoped_bundles: dict[str, ModelBundle]) -> list[dict[str, Any]]:
     """Collect only the principal evaluation and comparison result tables."""
     items: list[dict[str, Any]] = []
@@ -5872,6 +6403,8 @@ def _automatic_report_tables(scoped_bundles: dict[str, ModelBundle]) -> list[dic
 
     return items
 
+# Function: _is_report_text_column
+# Return whether the value satisfies the report text column rule.
 def _is_report_text_column(column_name: Any) -> bool:
     text = str(column_name).casefold()
     keywords = [
@@ -5882,6 +6415,8 @@ def _is_report_text_column(column_name: Any) -> bool:
     return any(keyword in text for keyword in keywords)
 
 
+# Function: _is_report_numeric_series
+# Return whether the value satisfies the report numeric series rule.
 def _is_report_numeric_series(series: pd.Series) -> bool:
     if series.empty:
         return False
@@ -5892,6 +6427,8 @@ def _is_report_numeric_series(series: pd.Series) -> bool:
     return float(numeric.notna().sum()) / float(valid.sum()) >= 0.82
 
 
+# Function: _excel_column_width
+# Prepare column width content for Excel output.
 def _excel_column_width(table: pd.DataFrame, column: Any) -> int:
     """Compact content-driven Excel width; long narrative fields wrap instead of stretching the sheet."""
     name = str(column)
@@ -5905,6 +6442,8 @@ def _excel_column_width(table: pd.DataFrame, column: Any) -> int:
         return int(min(max(representative + 2, 9), 16))
     return int(min(max(representative + 2, 10), 24))
 
+# Function: _report_excel_bytes
+# Prepare excel bytes information for reporting.
 def _report_excel_bytes(items: list[dict[str, Any]]) -> bytes:
     output = io.BytesIO()
     used_names: set[str] = set()
@@ -5987,6 +6526,8 @@ def _report_excel_bytes(items: list[dict[str, Any]]) -> bytes:
     output.seek(0)
     return output.getvalue()
 
+# Function: _pdf_cell
+# Prepare cell content for PDF output.
 def _pdf_cell(value: Any, max_chars: int = 48, negative_parentheses: bool = False) -> str:
     try:
         missing = value is None or bool(pd.isna(value))
@@ -6009,6 +6550,8 @@ def _pdf_cell(value: Any, max_chars: int = 48, negative_parentheses: bool = Fals
     return text_value if len(text_value) <= max_chars else text_value[: max_chars - 3] + "..."
 
 
+# Function: _pdf_table_data
+# Prepare table data content for PDF output.
 def _pdf_table_data(
     table: pd.DataFrame,
     header_style: Any,
@@ -6042,6 +6585,8 @@ def _pdf_table_data(
     return data
 
 
+# Function: _pdf_column_widths
+# Prepare column widths content for PDF output.
 def _pdf_column_widths(table: pd.DataFrame, available_width: float) -> list[float]:
     """Return compact, content-driven widths and only shrink when the table exceeds the page."""
     from reportlab.lib.units import inch
@@ -6071,6 +6616,8 @@ def _pdf_column_widths(table: pd.DataFrame, available_width: float) -> list[floa
         widths = [width * scale for width in widths]
     return widths
 
+# Function: _report_chart_color
+# Prepare chart color information for reporting.
 def _report_chart_color(color: str) -> str:
     """Darken very light neutral colors so report charts retain contrast in PDF output."""
     value = str(color or "#A5A5A5").strip()
@@ -6090,6 +6637,8 @@ def _report_chart_color(color: str) -> str:
     return value
 
 
+# Function: _report_chart_colors
+# Prepare chart colors information for reporting.
 def _report_chart_colors(colors: list[str] | None, count: int) -> list[str] | None:
     if not colors:
         return colors
@@ -6099,6 +6648,8 @@ def _report_chart_colors(colors: list[str] | None, count: int) -> list[str] | No
     return [normalized[index % len(normalized)] for index in range(count)]
 
 
+# Function: _style_report_axis
+# Support the style report axis workflow.
 def _style_report_axis(ax, x_label: str = "", y_label: str = "", rotation: int = 45) -> None:
     """Apply a consistent, high-contrast style to charts exported to PDF."""
     dark = "#26323A"
@@ -6125,6 +6676,8 @@ def _style_report_axis(ax, x_label: str = "", y_label: str = "", rotation: int =
         ax.spines[spine].set_visible(False)
 
 
+# Function: _place_report_legend
+# Support the place report legend workflow.
 def _place_report_legend(ax, handles=None, labels=None, ncol: int = 4):
     """Place a readable legend inside the plot area with a white framed background."""
     kwargs = {
@@ -6148,6 +6701,8 @@ def _place_report_legend(ax, handles=None, labels=None, ncol: int = 4):
     return legend
 
 
+# Function: _pillow_font
+# Support the pillow font workflow.
 def _pillow_font(size: int, bold: bool = False):
     """Return a portable Pillow font without requiring project font files."""
     from PIL import ImageFont
@@ -6165,6 +6720,8 @@ def _pillow_font(size: int, bold: bool = False):
     return ImageFont.load_default()
 
 
+# Function: _pillow_png_from_pivot
+# Support the pillow png from pivot workflow.
 def _pillow_png_from_pivot(
     pivot: pd.DataFrame,
     title: str,
@@ -6356,6 +6913,8 @@ def _pillow_png_from_pivot(
     return output.getvalue()
 
 
+# Function: _pillow_pie_chart_png
+# Support the pillow pie chart png workflow.
 def _pillow_pie_chart_png(
     labels: list[str],
     values: list[float],
@@ -6407,6 +6966,8 @@ def _pillow_pie_chart_png(
     return output.getvalue()
 
 
+# Function: _plot_png_from_pivot
+# Build and display the png from pivot chart.
 def _plot_png_from_pivot(pivot: pd.DataFrame, title: str, y_label: str, colors: list[str] | None = None, stacked: bool = True) -> bytes | None:
     if pivot.empty:
         return None
@@ -6445,6 +7006,8 @@ def _plot_png_from_pivot(pivot: pd.DataFrame, title: str, y_label: str, colors: 
         return _pillow_png_from_pivot(pivot, title, y_label, colors, stacked)
 
 
+# Function: _resource_category_bench_chart_png
+# Calculate or render category bench chart png resource information.
 def _resource_category_bench_chart_png(data: pd.DataFrame, config: ModelConfig, model_name: str, destination_mode: str) -> bytes | None:
     bench_col = config.column_for_role("Bench")
     category_col = config.column_for_role("Category")
@@ -6469,6 +7032,8 @@ def _resource_category_bench_chart_png(data: pd.DataFrame, config: ModelConfig, 
     return _plot_png_from_pivot(pivot_pct, f"Resource Category Distribution by Bench - {model_name} ({destination_mode})", "Distribution (%)", colors, stacked=True)
 
 
+# Function: _metal_at_risk_chart_png
+# Support the metal at risk chart png workflow.
 def _metal_at_risk_chart_png(data: pd.DataFrame, config: ModelConfig, model_name: str) -> bytes | None:
     bench_col = config.column_for_role("Bench")
     category_col = config.column_for_role("Category")
@@ -6500,6 +7065,8 @@ def _metal_at_risk_chart_png(data: pd.DataFrame, config: ModelConfig, model_name
     return _plot_png_from_pivot(pivot, f"Metal at Risk - {_active_year_scope_short_label()} - {model_name}", f"Au ({unit})", colors, stacked=True)
 
 
+# Function: _comparison_ore_phase_chart_png
+# Prepare ore phase chart png comparison information.
 def _comparison_ore_phase_chart_png(table: pd.DataFrame) -> bytes | None:
     if table.empty:
         return None
@@ -6514,6 +7081,8 @@ def _comparison_ore_phase_chart_png(table: pd.DataFrame) -> bytes | None:
 
 
 
+# Function: _role_bench_chart_png
+# Support the role bench chart png workflow.
 def _role_bench_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, model_name: str, destination_mode: str, color_map: dict[str, str], percent: bool = True) -> bytes | None:
     bench_col = config.column_for_role("Bench")
     role_col = config.column_for_role(role)
@@ -6551,6 +7120,8 @@ def _role_bench_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, mo
     return _plot_png_from_pivot(pivot, f"{role} Distribution by Bench - {model_name} ({destination_mode})", y_label, colors, stacked=True)
 
 
+# Function: _role_pie_chart_png
+# Support the role pie chart png workflow.
 def _role_pie_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, model_name: str, title: str, color_map: dict[str, str]) -> bytes | None:
     role_col = config.column_for_role(role)
     if not role_col or role_col not in data.columns or data.empty:
@@ -6619,6 +7190,8 @@ def _role_pie_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, mode
         return _pillow_pie_chart_png(labels, values, colors, chart_title)
 
 
+# Function: _ore_phase_chart_png
+# Support the ore phase chart png workflow.
 def _ore_phase_chart_png(data: pd.DataFrame, config: ModelConfig, model_name: str) -> bytes | None:
     phase_col = _phase_column(config, data)
     dest_col = config.column_for_role("Destination")
@@ -6641,6 +7214,8 @@ def _ore_phase_chart_png(data: pd.DataFrame, config: ModelConfig, model_name: st
     return _plot_png_from_pivot(pivot, f"Ore Kt by Phase - {model_name}", "Ore Kt", ["#03547C"], stacked=False)
 
 
+# Function: _year_role_chart_png
+# Support the year role chart png workflow.
 def _year_role_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, model_name: str, destination_mode: str, color_map: dict[str, str], percent: bool = True) -> bytes | None:
     time_role = _active_time_role()
     time_col = _time_column(config, data, time_role)
@@ -6681,6 +7256,8 @@ def _year_role_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, mod
     return _plot_png_from_pivot(pivot, f"{role} Distribution by {time_role} - {model_name} ({destination_mode})", y_label, colors, stacked=True)
 
 
+# Function: _destination_bench_grade_chart_png
+# Support the destination bench grade chart png workflow.
 def _destination_bench_grade_chart_png(data: pd.DataFrame, config: ModelConfig, model_name: str, destination_mode: str) -> bytes | None:
     bench_col = config.column_for_role("Bench")
     dest_col = config.column_for_role("Destination")
@@ -6814,6 +7391,8 @@ def _destination_bench_grade_chart_png(data: pd.DataFrame, config: ModelConfig, 
         )
 
 
+# Function: _grade_distribution_multiplot_png
+# Support the grade distribution multiplot png workflow.
 def _grade_distribution_multiplot_png(data: pd.DataFrame, config: ModelConfig, model_name: str) -> bytes | None:
     specs = [spec for spec in config.grade_specs if spec.column in data.columns and not _is_contained_metal_spec(spec)][:9]
     if not specs or data.empty:
@@ -6858,6 +7437,8 @@ def _grade_distribution_multiplot_png(data: pd.DataFrame, config: ModelConfig, m
     return output.getvalue()
 
 
+# Function: _automatic_report_charts
+# Support the automatic report charts workflow.
 def _automatic_report_charts(scoped_bundles: dict[str, ModelBundle]) -> list[dict[str, Any]]:
     charts: list[dict[str, Any]] = []
     for model_name, bundle in scoped_bundles.items():
@@ -6954,6 +7535,8 @@ def _automatic_report_charts(scoped_bundles: dict[str, ModelBundle]) -> list[dic
             )
     return charts
 
+# Function: _report_pdf_bytes
+# Prepare pdf bytes information for reporting.
 def _report_pdf_bytes(
     items: list[dict[str, Any]],
     charts: list[dict[str, Any]],
@@ -7118,6 +7701,8 @@ def _report_pdf_bytes(
     output.seek(0)
     return output.getvalue()
 
+# Function: render_reports
+# Render automatic report selection, preview and Excel/PDF downloads.
 def render_reports() -> None:
     page_header("Report Builder", "Automatically export evaluation/comparison tables with footnotes and all available charts from the active session.")
     if not st.session_state.models:
@@ -7204,6 +7789,13 @@ def render_reports() -> None:
             st.markdown("**Charts included:** " + ", ".join(chart["title"] for chart in charts))
 
 
+
+# =============================================================================
+# ABOUT PAGE AND AUTHORSHIP INFORMATION
+# =============================================================================
+# Function: render_about
+# Render application purpose, technical scope, author information and
+# responsible-use notice.
 def render_about() -> None:
     """Render the application information, authorship and technical-use notice."""
     page_header(
