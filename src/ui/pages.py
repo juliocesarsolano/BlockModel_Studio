@@ -188,79 +188,98 @@ def _apply_premium_tab_styles() -> None:
         """
         <style>
         div[data-testid="stTabs"] {
-            margin-top: 0.65rem;
+            margin-top: 0.75rem;
         }
 
-        div[data-testid="stTabs"] div[role="tablist"] {
-            gap: 0.45rem;
-            padding: 0.35rem;
-            border: 1px solid rgba(0, 84, 124, 0.16);
-            border-radius: 12px;
-            background:
-                linear-gradient(180deg, rgba(0, 84, 124, 0.085), rgba(0, 84, 124, 0.025));
+        div[data-testid="stTabs"] div[role="tablist"],
+        div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+            display: flex !important;
+            gap: 0.70rem !important;
+            padding: 0.48rem !important;
+            border: 1px solid rgba(0, 84, 124, 0.22) !important;
+            border-radius: 13px !important;
+            background: linear-gradient(180deg, #F4F8FA 0%, #EAF2F6 100%) !important;
             box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.85),
-                0 8px 22px rgba(0, 45, 67, 0.055);
+                inset 0 1px 0 rgba(255, 255, 255, 0.95),
+                0 7px 18px rgba(0, 45, 67, 0.08) !important;
         }
 
-        div[data-testid="stTabs"] button[role="tab"] {
-            min-height: 2.45rem;
-            padding: 0.58rem 0.95rem !important;
-            border: 1px solid transparent !important;
+        div[data-testid="stTabs"] button[role="tab"],
+        div[data-testid="stTabs"] [data-baseweb="tab"] {
+            flex: 0 0 auto !important;
+            min-height: 2.65rem !important;
+            padding: 0.62rem 1.08rem !important;
+            margin: 0 !important;
+            border: 1px solid rgba(0, 84, 124, 0.20) !important;
             border-radius: 9px !important;
-            background: transparent !important;
-            color: #344B5A !important;
-            font-weight: 650 !important;
-            letter-spacing: 0.01em;
+            background: #FFFFFF !important;
+            color: #004967 !important;
+            box-shadow: 0 2px 7px rgba(0, 45, 67, 0.08) !important;
+            font-weight: 700 !important;
+            letter-spacing: 0.01em !important;
+            white-space: nowrap !important;
             transition:
+                transform 120ms ease,
                 background-color 140ms ease,
                 border-color 140ms ease,
                 box-shadow 140ms ease,
-                color 140ms ease;
+                color 140ms ease !important;
         }
 
-        div[data-testid="stTabs"] button[role="tab"] p {
-            margin: 0;
+        div[data-testid="stTabs"] button[role="tab"] p,
+        div[data-testid="stTabs"] [data-baseweb="tab"] p,
+        div[data-testid="stTabs"] [data-baseweb="tab"] span {
+            margin: 0 !important;
             color: inherit !important;
-            font-size: 0.92rem;
-            font-weight: 650;
+            font-size: 0.93rem !important;
+            font-weight: 700 !important;
         }
 
-        div[data-testid="stTabs"] button[role="tab"]:hover {
-            border-color: rgba(0, 84, 124, 0.18) !important;
-            background: rgba(255, 255, 255, 0.72) !important;
+        div[data-testid="stTabs"] button[role="tab"]:hover,
+        div[data-testid="stTabs"] [data-baseweb="tab"]:hover {
+            transform: translateY(-1px) !important;
+            border-color: rgba(163, 145, 97, 0.78) !important;
+            background: #FFFDF7 !important;
             color: #004967 !important;
+            box-shadow: 0 5px 12px rgba(0, 73, 103, 0.13) !important;
         }
 
-        div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
-            border-color: rgba(0, 73, 103, 0.62) !important;
-            background: linear-gradient(135deg, #004967 0%, #006A93 100%) !important;
+        div[data-testid="stTabs"] button[role="tab"][aria-selected="true"],
+        div[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"],
+        div[data-testid="stTabs"] [aria-selected="true"][role="tab"] {
+            border-color: #004967 !important;
+            background: linear-gradient(135deg, #004967 0%, #006F98 100%) !important;
             color: #FFFFFF !important;
             box-shadow:
-                0 9px 22px rgba(0, 73, 103, 0.20),
-                inset 0 1px 0 rgba(255, 255, 255, 0.22);
+                0 8px 18px rgba(0, 73, 103, 0.24),
+                inset 0 1px 0 rgba(255, 255, 255, 0.22) !important;
         }
 
-        div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] p {
+        div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] p,
+        div[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"] p,
+        div[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"] span {
             color: #FFFFFF !important;
         }
 
-        div[data-testid="stTabs"] div[data-baseweb="tab-highlight"] {
-            display: none;
+        div[data-testid="stTabs"] div[data-baseweb="tab-highlight"],
+        div[data-testid="stTabs"] div[data-baseweb="tab-border"] {
+            display: none !important;
         }
 
         div[data-testid="stTabs"] div[role="tabpanel"] {
-            padding-top: 1.1rem;
+            padding-top: 1.15rem !important;
         }
 
-        @media (max-width: 760px) {
-            div[data-testid="stTabs"] div[role="tablist"] {
-                overflow-x: auto;
-                flex-wrap: nowrap;
+        @media (max-width: 900px) {
+            div[data-testid="stTabs"] div[role="tablist"],
+            div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+                overflow-x: auto !important;
+                flex-wrap: nowrap !important;
             }
 
-            div[data-testid="stTabs"] button[role="tab"] {
-                flex: 0 0 auto;
+            div[data-testid="stTabs"] button[role="tab"],
+            div[data-testid="stTabs"] [data-baseweb="tab"] {
+                flex: 0 0 auto !important;
             }
         }
         </style>
@@ -918,14 +937,19 @@ MW_DESTINATIONS = {"mw1", "mw2"}
 W_DESTINATIONS = {"w1", "w2"}
 VALID_DESTINATIONS = VALID_DESTINATIONS | MG_DESTINATIONS | MW_DESTINATIONS | W_DESTINATIONS
 
-DESTINATION_CUSTOM_MODE = "Custom combination"
+DESTINATION_SINGLE_MODE = "Single destination"
+DESTINATION_CUSTOM_MODE = "Custom destinations"
+DESTINATION_ALL_MODE = "All destinations"
+LEGACY_DESTINATION_CUSTOM_MODE = "Custom combination"
 DEFAULT_DESTINATION_MODE = "Ore Reserve (HG+LG+MG)"
 DESTINATION_MODE_OPTIONS = [
     DEFAULT_DESTINATION_MODE,
     "Ore Resource (HG+LG+MG+MW)",
     "Waste (W1+W2)",
     "Mineral Waste (MW1+MW2)",
+    DESTINATION_SINGLE_MODE,
     DESTINATION_CUSTOM_MODE,
+    DESTINATION_ALL_MODE,
 ]
 DESTINATION_MODE_CODES = {
     DEFAULT_DESTINATION_MODE: HG_DESTINATIONS | LG_DESTINATIONS | MG_DESTINATIONS,
@@ -1466,26 +1490,31 @@ def _available_destination_codes_for_bundles(bundles: list[ModelBundle]) -> list
 
 def _master_destination_mode() -> str:
     mode = str(st.session_state.get("master_destination_mode", DEFAULT_DESTINATION_MODE))
+    if mode == LEGACY_DESTINATION_CUSTOM_MODE:
+        mode = DESTINATION_CUSTOM_MODE
     return mode if mode in DESTINATION_MODE_OPTIONS else DEFAULT_DESTINATION_MODE
 
 
 def _master_destination_label() -> str:
     mode = _master_destination_mode()
-    if mode != DESTINATION_CUSTOM_MODE:
-        return mode
-
-    selected = [
-        _display_destination(code)
-        for code in st.session_state.get("master_destination_custom_codes", [])
-        if _normalize_destination_code(code) in VALID_DESTINATIONS
-    ]
-    return f"Custom ({'+'.join(selected)})" if selected else "Custom (None)"
+    if mode == DESTINATION_SINGLE_MODE:
+        code = _normalize_destination_code(st.session_state.get("master_destination_single_code", ""))
+        return f"Single ({_display_destination(code)})" if code else "Single (None)"
+    if mode == DESTINATION_CUSTOM_MODE:
+        selected = [
+            _display_destination(code)
+            for code in st.session_state.get("master_destination_custom_codes", [])
+            if _normalize_destination_code(code) in VALID_DESTINATIONS
+        ]
+        return f"Custom ({'+'.join(selected)})" if selected else "Custom (None)"
+    return mode
 
 
 def _render_master_destination_filter_sidebar(bundles: list[ModelBundle], key_prefix: str) -> str:
     available_codes = _available_destination_codes_for_bundles(bundles)
     if not available_codes:
         st.session_state.master_destination_mode = DEFAULT_DESTINATION_MODE
+        st.session_state.master_destination_single_code = ""
         st.session_state.master_destination_custom_codes = []
         return _master_destination_label()
 
@@ -1501,35 +1530,54 @@ def _render_master_destination_filter_sidebar(bundles: list[ModelBundle], key_pr
 
     widget_key = "master_destination_mode_widget"
     current_mode = _master_destination_mode()
-    if widget_key not in st.session_state or st.session_state[widget_key] not in DESTINATION_MODE_OPTIONS:
-        st.session_state[widget_key] = current_mode
+    widget_value = st.session_state.get(widget_key, current_mode)
+    if widget_value == LEGACY_DESTINATION_CUSTOM_MODE:
+        widget_value = DESTINATION_CUSTOM_MODE
+    if widget_value not in DESTINATION_MODE_OPTIONS:
+        widget_value = current_mode
+    st.session_state[widget_key] = widget_value
 
     mode = st.sidebar.selectbox(
-        "Destination / Ore Type",
+        "Destination scope",
         DESTINATION_MODE_OPTIONS,
         key=widget_key,
         help=(
-            "Transversal master filter applied across Model Description, Model Evaluation, "
-            "Model Comparison and Report Builder. MG means Medium Grade and groups M1/M2/M3. "
-            "Use Custom combination to select any combination of the destinations detected in the loaded models."
+            "Use a corporate preset, select one detected destination, create a custom combination, "
+            "or include all valid detected destinations. MG means Medium Grade and groups M1/M2/M3."
         ),
     )
     st.session_state.master_destination_mode = mode
 
-    if mode == DESTINATION_CUSTOM_MODE:
-        display_options = [_display_destination(code) for code in available_codes]
-        custom_widget_key = "master_destination_custom_codes_widget"
-        available_set = set(available_codes)
+    display_options = [_display_destination(code) for code in available_codes]
+    available_set = set(available_codes)
 
+    if mode == DESTINATION_SINGLE_MODE:
+        single_widget_key = "master_destination_single_widget"
+        current_code = _normalize_destination_code(
+            st.session_state.get("master_destination_single_code", available_codes[0])
+        )
+        if current_code not in available_set:
+            current_code = available_codes[0]
+        current_display = _display_destination(current_code)
+        if st.session_state.get(single_widget_key) not in display_options:
+            st.session_state[single_widget_key] = current_display
+
+        selected_display = st.sidebar.selectbox(
+            "Destination",
+            display_options,
+            key=single_widget_key,
+            help="Select one destination code detected in the loaded model(s).",
+        )
+        st.session_state.master_destination_single_code = _normalize_destination_code(selected_display)
+
+    elif mode == DESTINATION_CUSTOM_MODE:
+        custom_widget_key = "master_destination_custom_codes_widget"
         if custom_widget_key not in st.session_state:
-            if "master_destination_custom_codes" in st.session_state:
-                source_codes = [
-                    _normalize_destination_code(code)
-                    for code in st.session_state.master_destination_custom_codes
-                    if _normalize_destination_code(code) in available_set
-                ]
-            else:
-                source_codes = list(available_codes)
+            source_codes = [
+                _normalize_destination_code(code)
+                for code in st.session_state.get("master_destination_custom_codes", available_codes)
+                if _normalize_destination_code(code) in available_set
+            ]
             st.session_state[custom_widget_key] = [_display_destination(code) for code in source_codes]
         else:
             cleaned_display = [
@@ -1541,11 +1589,11 @@ def _render_master_destination_filter_sidebar(bundles: list[ModelBundle], key_pr
                 st.session_state[custom_widget_key] = cleaned_display
 
         selected_display = st.sidebar.multiselect(
-            "Detected destinations",
+            "Destinations",
             display_options,
             key=custom_widget_key,
             help=(
-                "Select the required combination from the destination codes detected in the loaded models. "
+                "Select any combination from the destination codes detected in the loaded model(s). "
                 "An empty selection intentionally returns no records."
             ),
         )
@@ -2091,6 +2139,25 @@ def _left_aligned_table_style(
         [
             {"selector": "th", "props": [("text-align", "left")]},
             {"selector": "td", "props": [("text-align", "left")]},
+        ]
+    )
+
+
+def _centered_table_style(
+    table: pd.DataFrame,
+    *,
+    formatters: dict[str, Any] | None = None,
+    na_rep: str = "-",
+) -> pd.io.formats.style.Styler:
+    """Center-align headers and all cell values for compact summary tables."""
+    styler = table.style
+    if formatters:
+        styler = styler.format(formatters, na_rep=na_rep)
+    return styler.set_properties(**{"text-align": "center"}).set_table_styles(
+        [
+            {"selector": "th", "props": [("text-align", "center")]},
+            {"selector": "th.col_heading", "props": [("text-align", "center")]},
+            {"selector": "td", "props": [("text-align", "center")]},
         ]
     )
 
@@ -2779,12 +2846,19 @@ def _apply_destination_mode(data: pd.DataFrame, config: ModelConfig, mode: str) 
     if not dest_col or dest_col not in data.columns or data.empty:
         return data
 
-    if mode == DESTINATION_CUSTOM_MODE or str(mode).startswith("Custom"):
+    if mode == DESTINATION_SINGLE_MODE or str(mode).startswith("Single"):
+        selected_code = _normalize_destination_code(
+            st.session_state.get("master_destination_single_code", "")
+        )
+        selected_codes = {selected_code} if selected_code in VALID_DESTINATIONS else set()
+    elif mode in {DESTINATION_CUSTOM_MODE, LEGACY_DESTINATION_CUSTOM_MODE} or str(mode).startswith("Custom"):
         selected_codes = {
             _normalize_destination_code(code)
             for code in st.session_state.get("master_destination_custom_codes", [])
             if _normalize_destination_code(code) in VALID_DESTINATIONS
         }
+    elif mode == DESTINATION_ALL_MODE:
+        selected_codes = VALID_DESTINATIONS
     else:
         selected_codes = DESTINATION_MODE_CODES.get(mode, DESTINATION_MODE_CODES[DEFAULT_DESTINATION_MODE])
 
@@ -4951,7 +5025,7 @@ def render_model_description() -> None:
             overview_formatters[count_column] = format_count
 
     st.dataframe(
-        overview.style.format(overview_formatters, na_rep="N/A"),
+        _centered_table_style(overview, formatters=overview_formatters, na_rep="N/A"),
         use_container_width=True,
         hide_index=True,
     )
@@ -5072,19 +5146,374 @@ def render_evaluation() -> None:
     with tabs[3]:
         _render_resource_by_destination(scoped_bundle, model_name, filtered_data, sidebar_filters)
 
+
+FIVE_YEAR_ORE_DESTINATIONS = ["H1", "H2", "L1", "L2", "L3", "M1", "M2", "M3"]
+FIVE_YEAR_FILTER_ROLES = [
+    ("Pit", "Pit"),
+    ("Phase", "Phase / Pit phase"),
+    ("Category", "Category"),
+    ("Mettype", "Mettype"),
+]
+
+
+def _five_year_filter_column(config: ModelConfig, data: pd.DataFrame, role: str) -> str | None:
+    if role == "Phase":
+        return _phase_column(config, data)
+    return config.column_for_role(role)
+
+
+def _five_year_filter_options(bundles: dict[str, ModelBundle], role: str) -> list[str]:
+    values: set[str] = set()
+    for bundle in bundles.values():
+        column = _five_year_filter_column(bundle.config, bundle.data, role)
+        if not column or column not in bundle.data.columns:
+            continue
+        series = bundle.data[column].dropna().astype(str).str.strip()
+        values.update(value for value in series.tolist() if value)
+    if role == "Phase":
+        return sorted(values, key=_natural_phase_sort_key)
+    return sorted(values, key=lambda value: value.casefold())
+
+
+def _comparison_year_series(data: pd.DataFrame, config: ModelConfig) -> pd.Series:
+    """Return planning year from Year, falling back to year encoded in Month labels."""
+    result = pd.Series(pd.NA, index=data.index, dtype="Int64")
+
+    year_col = _year_column(config, data)
+    if year_col and year_col in data.columns:
+        numeric = pd.to_numeric(data[year_col], errors="coerce")
+        integer_mask = numeric.notna() & (numeric % 1 == 0)
+        if integer_mask.any():
+            result.loc[integer_mask] = numeric.loc[integer_mask].astype("int64")
+
+    month_col = _month_column(config, data)
+    if month_col and month_col in data.columns and result.isna().any():
+        month_year = data[month_col].map(_parse_month_year)
+        derived_year = month_year.map(lambda parsed: parsed[0] if parsed else pd.NA).astype("Int64")
+        result = result.fillna(derived_year)
+
+    return result
+
+
+def _apply_five_year_independent_filters(
+    bundle: ModelBundle,
+    source_values: list[int],
+    role_filters: dict[str, list[str]],
+) -> pd.DataFrame:
+    """Apply only controls defined inside the five-year comparison tab."""
+    data = bundle.data.copy()
+
+    blk_col = _block_model_column(bundle.config, data)
+    if blk_col and blk_col in data.columns:
+        blk_numeric = pd.to_numeric(data[blk_col], errors="coerce")
+        data = data[blk_numeric.isin(source_values)]
+
+    for role, selected_values in role_filters.items():
+        column = _five_year_filter_column(bundle.config, data, role)
+        if not column or column not in data.columns:
+            continue
+        if not selected_values:
+            data = data.iloc[0:0]
+            continue
+        normalized = data[column].astype(str).str.strip()
+        data = data[normalized.isin(selected_values)]
+
+    return data
+
+
+def _five_year_ounce_matrix(
+    bundle: ModelBundle,
+    metal_label: str,
+    years: list[int],
+    source_values: list[int],
+    role_filters: dict[str, list[str]],
+) -> tuple[pd.DataFrame | None, str | None]:
+    config = bundle.config
+    destination_col = config.column_for_role("Destination")
+    if not destination_col or destination_col not in bundle.data.columns:
+        return None, "Destination is not configured."
+
+    grade_spec = _spec_by_canonical_label(config, metal_label)
+    if not grade_spec or grade_spec.column not in bundle.data.columns:
+        return None, f"{metal_label} grade is not configured."
+
+    data = _apply_five_year_independent_filters(bundle, source_values, role_filters)
+    year_values = _comparison_year_series(data, config)
+    if year_values.notna().sum() == 0:
+        return None, "Neither a usable Year field nor Month labels containing a year were found."
+
+    work = data.copy()
+    work["__comparison_year__"] = year_values
+    work["__destination_code__"] = work[destination_col].map(_normalize_destination_code).str.upper()
+    work = work[
+        work["__comparison_year__"].isin(years)
+        & work["__destination_code__"].isin(FIVE_YEAR_ORE_DESTINATIONS)
+    ]
+
+    matrix = pd.DataFrame(0.0, index=years, columns=FIVE_YEAR_ORE_DESTINATIONS)
+    for (year, destination), group in work.groupby(
+        ["__comparison_year__", "__destination_code__"],
+        observed=True,
+        sort=False,
+    ):
+        ounces = _contained_ounces_for_label(group, config, metal_label)
+        if ounces is not None:
+            matrix.loc[int(year), str(destination)] = float(ounces)
+
+    matrix["Grand Total"] = matrix.sum(axis=1)
+    matrix.loc["Grand Total"] = matrix.sum(axis=0)
+    matrix.index.name = "Year"
+    return matrix, None
+
+
+def _format_ounce_table_value(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    numeric = float(value)
+    rounded = int(round(abs(numeric)))
+    return f"({rounded:,})" if numeric < 0 else f"{rounded:,}"
+
+
+def _ore_ounce_table_style(matrix: pd.DataFrame) -> pd.io.formats.style.Styler:
+    display = matrix.reset_index()
+    numeric_columns = [column for column in display.columns if column != "Year"]
+    formatters = {column: _format_ounce_table_value for column in numeric_columns}
+
+    styler = display.style.format(formatters, na_rep="-")
+    styler = styler.set_properties(subset=["Year"], **{"text-align": "center"})
+    styler = styler.set_properties(subset=numeric_columns, **{"text-align": "right"})
+    styler = styler.set_table_styles(
+        [
+            {
+                "selector": "th",
+                "props": [
+                    ("background-color", "#00547C"),
+                    ("color", "#FFFFFF"),
+                    ("font-weight", "700"),
+                    ("text-align", "center"),
+                    ("border", "1px solid #D3D9DD"),
+                ],
+            },
+            {"selector": "td", "props": [("border", "1px solid #D3D9DD")]},
+        ]
+    )
+    return styler.apply(
+        lambda row: [
+            "font-weight: 700; background-color: #F3EFE4;"
+            if str(row["Year"]) == "Grand Total"
+            else ""
+            for _ in row
+        ],
+        axis=1,
+    )
+
+
+def _render_ore_ounce_matrix(title: str, matrix: pd.DataFrame) -> None:
+    st.markdown(f"*{title}*")
+    st.dataframe(
+        _ore_ounce_table_style(matrix),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def _stable_comparison_multiselect(
+    label: str,
+    options: list[str],
+    key: str,
+    help_text: str,
+) -> list[str]:
+    if key not in st.session_state:
+        st.session_state[key] = list(options)
+    else:
+        cleaned = [value for value in st.session_state[key] if value in options]
+        if cleaned != st.session_state[key]:
+            st.session_state[key] = cleaned
+    return st.multiselect(label, options, key=key, help=help_text)
+
+
+def _render_five_year_ore_comparison(
+    raw_bundles: dict[str, ModelBundle],
+    selected_model_names: list[str],
+) -> None:
+    st.subheader("Five-Year Au and Ag Ore Comparison")
+    st.caption(
+        "This analysis uses its own controls and intentionally ignores the master Year/Month, Phase and "
+        "Destination filters. Destination columns are fixed to H1, H2, L1, L2, L3, M1, M2 and M3; "
+        "M1-M3 represent Medium Grade (MG)."
+    )
+
+    if len(selected_model_names) < 2:
+        st.info("Select at least two models to activate the five-year Au/Ag content and difference tables.")
+        return
+
+    reference_key = "five_year_ore_reference_model"
+    if st.session_state.get(reference_key) not in selected_model_names:
+        st.session_state[reference_key] = selected_model_names[0]
+
+    control_a, control_b, control_c = st.columns([1.25, 1.0, 1.15])
+    with control_a:
+        reference_model = st.selectbox(
+            "Reference model",
+            selected_model_names,
+            key=reference_key,
+            help="Difference = comparison model minus reference model, reported in ounces.",
+        )
+
+    start_year_key = "five_year_ore_start_year"
+    if start_year_key not in st.session_state:
+        st.session_state[start_year_key] = datetime.now().year + 1
+    with control_b:
+        start_year = int(
+            st.number_input(
+                "First planning year",
+                min_value=1900,
+                max_value=2200,
+                step=1,
+                key=start_year_key,
+                help="The table always contains five consecutive years beginning with this value.",
+            )
+        )
+
+    source_key = "five_year_ore_source_scope"
+    source_options = list(MASTER_BLK_MODEL_OPTIONS)
+    if st.session_state.get(source_key) not in source_options:
+        st.session_state[source_key] = source_options[0]
+    with control_c:
+        source_scope = st.selectbox(
+            "Model source",
+            source_options,
+            key=source_key,
+            help="Independent BLK_MODEL filter for this comparison only.",
+        )
+    source_values = MASTER_BLK_MODEL_OPTIONS[source_scope]
+
+    role_filters: dict[str, list[str]] = {}
+    with st.expander("Independent comparison filters", expanded=True):
+        st.caption(
+            "These filters are local to the five-year tables. Empty selections intentionally return no records."
+        )
+        filter_columns = st.columns(2)
+        visible_filter_index = 0
+        for role, label in FIVE_YEAR_FILTER_ROLES:
+            options = _five_year_filter_options(raw_bundles, role)
+            if not options:
+                continue
+            with filter_columns[visible_filter_index % 2]:
+                role_filters[role] = _stable_comparison_multiselect(
+                    label,
+                    options,
+                    key=f"five_year_ore_filter_{role.casefold()}",
+                    help_text=f"Independent {label} filter applied to every selected model when the role is configured.",
+                )
+            visible_filter_index += 1
+        if visible_filter_index == 0:
+            st.caption("No optional Pit, Phase, Category or Mettype fields are configured in the selected models.")
+
+    years = list(range(start_year, start_year + 5))
+    st.info(
+        f"Planning window: **{years[0]}-{years[-1]}** | Reference: **{reference_model}** | "
+        f"Model source: **{source_scope}**"
+    )
+
+    tables: dict[str, dict[str, pd.DataFrame]] = {"Au": {}, "Ag": {}}
+    errors: list[str] = []
+    for metal_label in ["Au", "Ag"]:
+        for model_name in selected_model_names:
+            matrix, error = _five_year_ounce_matrix(
+                raw_bundles[model_name],
+                metal_label,
+                years,
+                source_values,
+                role_filters,
+            )
+            if matrix is None:
+                errors.append(f"{model_name} / {metal_label}: {error}")
+            else:
+                tables[metal_label][model_name] = matrix
+
+    if errors:
+        with st.expander("Unavailable model/metal combinations", expanded=False):
+            for error in errors:
+                st.warning(error)
+
+    metal_tabs = st.tabs(["Au (oz)", "Ag (oz)"])
+    for metal_tab, metal_label in zip(metal_tabs, ["Au", "Ag"], strict=True):
+        with metal_tab:
+            metal_tables = tables[metal_label]
+            if not metal_tables:
+                st.info(f"No {metal_label} ounce tables can be calculated from the configured fields.")
+                continue
+
+            available_models = [name for name in selected_model_names if name in metal_tables]
+            st.markdown("#### Contents by model")
+            content_tabs = st.tabs(available_models)
+            for content_tab, model_name in zip(content_tabs, available_models, strict=True):
+                with content_tab:
+                    _render_ore_ounce_matrix(
+                        f"{metal_label} content by ore destination — {model_name}",
+                        metal_tables[model_name],
+                    )
+
+            if reference_model not in metal_tables:
+                st.warning(
+                    f"The selected reference model does not have a valid {metal_label} table; "
+                    "difference tables cannot be calculated for this metal."
+                )
+                continue
+
+            comparison_models = [name for name in available_models if name != reference_model]
+            st.markdown(f"#### Differences versus {reference_model}")
+            st.caption("Absolute difference in ounces: comparison model − reference model.")
+            if not comparison_models:
+                st.info("No additional model with a valid table is available for this difference calculation.")
+                continue
+
+            difference_tabs = st.tabs([f"{name} − {reference_model}" for name in comparison_models])
+            reference_table = metal_tables[reference_model]
+            for difference_tab, model_name in zip(difference_tabs, comparison_models, strict=True):
+                with difference_tab:
+                    difference = metal_tables[model_name].subtract(reference_table, fill_value=0.0)
+                    _render_ore_ounce_matrix(
+                        f"Ore difference ({metal_label} oz): {model_name} − {reference_model}",
+                        difference,
+                    )
+
 def render_comparison() -> None:
     _apply_premium_tab_styles()
     page_header("Model Comparison", "Compare two or more configured models after the mandatory global-volume check.")
     if len(st.session_state.models) < 2:
+        st.info(
+            "The five-year Au/Ag content and difference tables are available in Model Comparison once at least "
+            "two models have been configured."
+        )
         _render_no_models_state("Two models are required for comparison", minimum=2)
         return
 
-    selected = st.multiselect("Models to compare", list(st.session_state.models), default=list(st.session_state.models)[:2])
+    model_names = list(st.session_state.models)
+    selection_key = "comparison_selected_models"
+    if selection_key not in st.session_state:
+        st.session_state[selection_key] = model_names[:2]
+    else:
+        cleaned_selection = [name for name in st.session_state[selection_key] if name in model_names]
+        if cleaned_selection != st.session_state[selection_key]:
+            st.session_state[selection_key] = cleaned_selection
+
+    selected = st.multiselect(
+        "Models to compare",
+        model_names,
+        key=selection_key,
+        help="Select two to five configured models. All difference tables use the reference model chosen inside each comparison tab.",
+    )
     if len(selected) < 2:
-        st.warning("Select at least two models.")
+        st.warning(
+            "Select at least two models. The five-year Au/Ag comparison, destination comparison and volume check "
+            "remain disabled until two or more models are selected."
+        )
         return
 
-    selected_raw_bundles = [st.session_state.models[name] for name in selected]
+    selected_raw_bundle_map = {name: st.session_state.models[name] for name in selected}
+    selected_raw_bundles = list(selected_raw_bundle_map.values())
     _render_master_year_filter_sidebar(selected_raw_bundles, "comparison")
     _render_master_phase_filter_sidebar(selected_raw_bundles, "comparison")
     _render_master_destination_filter_sidebar(selected_raw_bundles, "comparison")
@@ -5104,7 +5533,11 @@ def render_comparison() -> None:
     _render_volume_gate_state(passed, message, len(selected), tolerance)
     accept_override = st.checkbox("I accept continuing even if the global-volume validation does not pass.", value=False)
 
-    tabs = st.tabs(["Global volume check", "Tabulation by Destination"])
+    tabs = st.tabs([
+        "Global volume check",
+        "Tabulation by Destination",
+        "5-Year Au & Ag by Destination",
+    ])
 
     with tabs[0]:
         st.subheader("Global-Volume Validation")
@@ -5152,8 +5585,17 @@ def render_comparison() -> None:
     with tabs[1]:
         if not passed and not accept_override:
             st.info("Destination comparison is locked until the volume check passes or you explicitly accept the override.")
-            return
-        _render_comparison_resource_by_destination(bundles, selected)
+        else:
+            _render_comparison_resource_by_destination(bundles, selected)
+
+    with tabs[2]:
+        if not passed and not accept_override:
+            st.info(
+                "The five-year Au/Ag comparison is locked until the global-volume check passes or you explicitly "
+                "accept the override. Once unlocked, its calculations use raw model data and its own local filters."
+            )
+        else:
+            _render_five_year_ore_comparison(selected_raw_bundle_map, selected)
 
 
 # -----------------------------------------------------------------------------
@@ -5194,12 +5636,169 @@ def _report_table_sheet_name(base: str, used: set[str]) -> str:
     return candidate
 
 
-def _report_table_item(title: str, table: pd.DataFrame, notes: list[str] | None = None, category: str = "Table") -> dict[str, Any]:
-    return {"title": title, "table": table.copy() if isinstance(table, pd.DataFrame) else pd.DataFrame(), "notes": notes or [], "category": category}
+def _report_table_item(
+    title: str,
+    table: pd.DataFrame,
+    notes: list[str] | None = None,
+    category: str = "Table",
+    numeric_format: str | None = None,
+    negative_parentheses: bool = False,
+) -> dict[str, Any]:
+    return {
+        "title": title,
+        "table": table.copy() if isinstance(table, pd.DataFrame) else pd.DataFrame(),
+        "notes": notes or [],
+        "category": category,
+        "numeric_format": numeric_format,
+        "negative_parentheses": bool(negative_parentheses),
+    }
 
 
 def _notes_frame(notes: list[str]) -> pd.DataFrame:
     return pd.DataFrame({"Notes": [f"{index}. {note}" for index, note in enumerate(notes, start=1)]})
+
+
+def _five_year_report_dataframe(matrix: pd.DataFrame) -> pd.DataFrame:
+    """Return a report-ready copy of a five-year ounce matrix."""
+    table = matrix.reset_index().copy()
+    for column in table.columns:
+        if column == "Year":
+            continue
+        table[column] = pd.to_numeric(table[column], errors="coerce")
+    return table
+
+
+def _five_year_report_items(raw_bundles: dict[str, ModelBundle]) -> list[dict[str, Any]]:
+    """Collect the independent five-year Au/Ag content and difference tables for exports."""
+    if len(raw_bundles) < 2:
+        return []
+
+    available_names = list(raw_bundles)
+    selection_key = "comparison_selected_models"
+    if selection_key in st.session_state:
+        selected_names = [
+            name for name in st.session_state.get(selection_key, [])
+            if name in raw_bundles
+        ]
+    else:
+        selected_names = available_names[:2]
+
+    # Respect an explicit comparison selection with fewer than two models.
+    if len(selected_names) < 2:
+        return []
+
+    selected_bundles = {name: raw_bundles[name] for name in selected_names}
+
+    reference_model = st.session_state.get("five_year_ore_reference_model", selected_names[0])
+    if reference_model not in selected_names:
+        reference_model = selected_names[0]
+
+    try:
+        start_year = int(st.session_state.get("five_year_ore_start_year", datetime.now().year + 1))
+    except (TypeError, ValueError):
+        start_year = datetime.now().year + 1
+    years = list(range(start_year, start_year + 5))
+
+    source_options = list(MASTER_BLK_MODEL_OPTIONS)
+    source_scope = st.session_state.get("five_year_ore_source_scope", source_options[0])
+    if source_scope not in MASTER_BLK_MODEL_OPTIONS:
+        source_scope = source_options[0]
+    source_values = MASTER_BLK_MODEL_OPTIONS[source_scope]
+
+    role_filters: dict[str, list[str]] = {}
+    filter_notes: list[str] = []
+    for role, label in FIVE_YEAR_FILTER_ROLES:
+        options = _five_year_filter_options(selected_bundles, role)
+        if not options:
+            continue
+        key = f"five_year_ore_filter_{role.casefold()}"
+        if key in st.session_state:
+            selected_values = [value for value in st.session_state.get(key, []) if value in options]
+        else:
+            selected_values = list(options)
+        role_filters[role] = selected_values
+        filter_notes.append(
+            f"{label}: {', '.join(selected_values) if selected_values else 'None selected'}"
+        )
+
+    base_notes = [
+        "Independent five-year comparison: master Year/Month, Phase and Destination filters are intentionally not applied.",
+        f"Models included: {', '.join(selected_names)}.",
+        f"Planning window: {years[0]}-{years[-1]}.",
+        f"Reference model: {reference_model}.",
+        f"Model source: {source_scope}.",
+        "Ore destinations: H1, H2, L1, L2, L3, M1, M2 and M3; M1-M3 represent Medium Grade (MG).",
+        *filter_notes,
+    ]
+
+    matrices: dict[str, dict[str, pd.DataFrame]] = {"Au": {}, "Ag": {}}
+    unavailable: list[str] = []
+    for metal_label in ["Au", "Ag"]:
+        for model_name in selected_names:
+            matrix, error = _five_year_ounce_matrix(
+                selected_bundles[model_name],
+                metal_label,
+                years,
+                source_values,
+                role_filters,
+            )
+            if matrix is None:
+                unavailable.append(f"{model_name} / {metal_label}: {error}")
+            else:
+                matrices[metal_label][model_name] = matrix
+
+    items: list[dict[str, Any]] = []
+    ounce_format = "#,##0;[Red](#,##0)"
+    category = "Model Comparison - 5-Year Au/Ag"
+
+    for metal_label in ["Au", "Ag"]:
+        metal_tables = matrices[metal_label]
+        for model_name in selected_names:
+            matrix = metal_tables.get(model_name)
+            if matrix is None:
+                continue
+            notes = [
+                *base_notes,
+                f"Table type: {metal_label} contained ounces by model and ore destination.",
+            ]
+            if unavailable:
+                notes.append("Unavailable combinations: " + " | ".join(unavailable))
+            items.append(
+                _report_table_item(
+                    f"5-Year {metal_label} Content (oz) - {model_name}",
+                    _five_year_report_dataframe(matrix),
+                    notes,
+                    category,
+                    numeric_format=ounce_format,
+                    negative_parentheses=True,
+                )
+            )
+
+        reference_table = metal_tables.get(reference_model)
+        if reference_table is None:
+            continue
+        for model_name in selected_names:
+            if model_name == reference_model or model_name not in metal_tables:
+                continue
+            difference = metal_tables[model_name].subtract(reference_table, fill_value=0.0)
+            notes = [
+                *base_notes,
+                f"Difference formula: {model_name} minus {reference_model}, reported in {metal_label} ounces.",
+            ]
+            if unavailable:
+                notes.append("Unavailable combinations: " + " | ".join(unavailable))
+            items.append(
+                _report_table_item(
+                    f"5-Year {metal_label} Difference (oz) - {model_name} vs {reference_model}",
+                    _five_year_report_dataframe(difference),
+                    notes,
+                    category,
+                    numeric_format=ounce_format,
+                    negative_parentheses=True,
+                )
+            )
+
+    return items
 
 
 def _automatic_report_tables(scoped_bundles: dict[str, ModelBundle]) -> list[dict[str, Any]]:
@@ -5265,6 +5864,12 @@ def _automatic_report_tables(scoped_bundles: dict[str, ModelBundle]) -> list[dic
                 "Model Comparison",
             ))
 
+        raw_bundles = {
+            name: st.session_state.models.get(name, scoped_bundles[name])
+            for name in scoped_bundles
+        }
+        items.extend(_five_year_report_items(raw_bundles))
+
     return items
 
 def _is_report_text_column(column_name: Any) -> bool:
@@ -5326,6 +5931,13 @@ def _report_excel_bytes(items: list[dict[str, Any]]) -> bytes:
                 table = item["table"].copy()
                 if table.empty:
                     continue
+                item_numeric_format = item.get("numeric_format") or "#,##0.00"
+                item_body_num_fmt = workbook.add_format({
+                    "border": 1,
+                    "valign": "vcenter",
+                    "align": "center",
+                    "num_format": item_numeric_format,
+                })
                 sheet = _report_table_sheet_name(item["title"], used_names)
                 table.to_excel(writer, sheet_name=sheet, index=False, startrow=1)
                 worksheet = writer.sheets[sheet]
@@ -5345,7 +5957,7 @@ def _report_excel_bytes(items: list[dict[str, Any]]) -> bytes:
                     column_widths.append(width)
                     worksheet.write(1, col_idx, column_name, header_fmt)
                     if _is_report_numeric_series(table[column]):
-                        worksheet.set_column(col_idx, col_idx, width, body_num_fmt)
+                        worksheet.set_column(col_idx, col_idx, width, item_body_num_fmt)
                     elif _is_report_text_column(column_name):
                         worksheet.set_column(col_idx, col_idx, width, body_text_fmt)
                     else:
@@ -5375,7 +5987,7 @@ def _report_excel_bytes(items: list[dict[str, Any]]) -> bytes:
     output.seek(0)
     return output.getvalue()
 
-def _pdf_cell(value: Any, max_chars: int = 48) -> str:
+def _pdf_cell(value: Any, max_chars: int = 48, negative_parentheses: bool = False) -> str:
     try:
         missing = value is None or bool(pd.isna(value))
     except Exception:
@@ -5383,10 +5995,14 @@ def _pdf_cell(value: Any, max_chars: int = 48) -> str:
     if missing:
         return "-"
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if abs(float(value)) >= 1000:
-            text_value = f"{float(value):,.0f}"
+        numeric = float(value)
+        if negative_parentheses:
+            rounded = int(round(abs(numeric)))
+            text_value = f"({rounded:,})" if numeric < 0 else f"{rounded:,}"
+        elif abs(numeric) >= 1000:
+            text_value = f"{numeric:,.0f}"
         else:
-            text_value = f"{float(value):,.3f}".rstrip("0").rstrip(".")
+            text_value = f"{numeric:,.3f}".rstrip("0").rstrip(".")
     else:
         text_value = str(value)
     text_value = text_value.replace("\n", " ").strip()
@@ -5398,6 +6014,7 @@ def _pdf_table_data(
     header_style: Any,
     cell_style: Any,
     numeric_cell_style: Any,
+    negative_parentheses: bool = False,
 ) -> list[list[Any]]:
     """Return ReportLab-ready table data using paragraphs for wrapped cells."""
     from reportlab.platypus import Paragraph
@@ -5418,7 +6035,7 @@ def _pdf_table_data(
         for column in table.columns:
             is_text_column = _is_report_text_column(column)
             max_chars = 115 if is_text_column else 58
-            value = _pdf_cell(row.get(column), max_chars=max_chars)
+            value = _pdf_cell(row.get(column), max_chars=max_chars, negative_parentheses=negative_parentheses)
             style = numeric_cell_style if column in numeric_columns else cell_style
             row_cells.append(Paragraph(html.escape(value), style))
         data.append(row_cells)
@@ -6405,7 +7022,13 @@ def _report_pdf_bytes(
                 story.append(Paragraph("Evaluation and Comparison Tables", section_style))
             story.append(Paragraph(html.escape(str(item["title"])), section_style))
             rendered_table_count += 1
-            table_data = _pdf_table_data(table_df, header_style, cell_style, numeric_cell_style)
+            table_data = _pdf_table_data(
+                table_df,
+                header_style,
+                cell_style,
+                numeric_cell_style,
+                negative_parentheses=bool(item.get("negative_parentheses", False)),
+            )
             col_widths = _pdf_column_widths(table_df, available_width)
             rl_table = Table(table_data, repeatRows=1, colWidths=col_widths, hAlign="LEFT", splitByRow=1)
             rl_table.setStyle(TableStyle([
@@ -6514,7 +7137,7 @@ def render_reports() -> None:
         <section class="bm-report-intro">
             <div class="bm-report-intro-kicker">Automatic package</div>
             <div class="bm-report-intro-title">Build one governed report from the active workspace</div>
-            <div class="bm-report-intro-text">The Excel workbook contains principal result tables and filter notes. The PDF adds the charts available from Evaluation and Comparison.</div>
+            <div class="bm-report-intro-text">The Excel workbook contains principal result tables and filter notes. The PDF adds the charts available from Evaluation and Comparison, including the independent five-year Au/Ag tables when two or more comparison models are selected.</div>
         </section>
         """,
         unsafe_allow_html=True,
@@ -6557,7 +7180,7 @@ def render_reports() -> None:
     pdf_bytes = _report_pdf_bytes(items, charts, model_names, report_name)
 
     st.markdown("#### Download package")
-    st.caption("Both files use the same active model, Year/Month, phase and destination scope shown above.")
+    st.caption("Evaluation tables use the active master scope shown above. The five-year Au/Ag comparison tables retain their independent Model Comparison controls, reference model and planning window.")
     export_cols = st.columns(2)
     export_cols[0].download_button(
         "Download automatic Excel tables",
@@ -6576,7 +7199,7 @@ def render_reports() -> None:
 
     with st.expander("Report contents", expanded=False):
         st.markdown(f"**{report_title}**")
-        st.markdown("The Excel file contains the principal evaluation/comparison result tables and their footnotes. The PDF contains those tables plus all charts from the corresponding evaluation and comparison sections.")
+        st.markdown("The Excel file contains the principal evaluation/comparison result tables and their footnotes, including five-year Au/Ag content and difference tables when available. The PDF contains those tables plus all charts from the corresponding evaluation and comparison sections.")
         if charts:
             st.markdown("**Charts included:** " + ", ".join(chart["title"] for chart in charts))
 
