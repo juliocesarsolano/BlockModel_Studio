@@ -4422,8 +4422,8 @@ def render_home() -> None:
 
     if st.session_state.models:
         _render_master_year_filter_sidebar(list(st.session_state.models.values()), "home")
-        _render_master_phase_filter_sidebar(list(st.session_state.models.values()), "home")
         _render_master_destination_filter_sidebar(list(st.session_state.models.values()), "home")
+        _render_master_phase_filter_sidebar(list(st.session_state.models.values()), "home")
 
     st.markdown(
         """
@@ -4996,8 +4996,8 @@ def render_model_description() -> None:
 
     raw_bundles = list(st.session_state.models.values())
     _render_master_year_filter_sidebar(raw_bundles, "description")
-    _render_master_phase_filter_sidebar(raw_bundles, "description")
     _render_master_destination_filter_sidebar(raw_bundles, "description")
+    _render_master_phase_filter_sidebar(raw_bundles, "description")
 
     scoped_bundles = {name: _scoped_bundle(bundle) for name, bundle in st.session_state.models.items()}
 
@@ -5120,8 +5120,8 @@ def render_evaluation() -> None:
     bundle = st.session_state.models[model_name]
     _render_active_model_strip(model_name, bundle)
     _render_master_year_filter_sidebar([bundle], f"eval_{_safe_key(model_name)}")
-    _render_master_phase_filter_sidebar([bundle], f"eval_{_safe_key(model_name)}")
     _render_master_destination_filter_sidebar([bundle], f"eval_{_safe_key(model_name)}")
+    _render_master_phase_filter_sidebar([bundle], f"eval_{_safe_key(model_name)}")
     scoped_bundle = _scoped_bundle(bundle)
 
     filtered_data, sidebar_filters = _sidebar_evaluation_filters(scoped_bundle, f"eval_{_safe_key(model_name)}")
@@ -5515,8 +5515,8 @@ def render_comparison() -> None:
     selected_raw_bundle_map = {name: st.session_state.models[name] for name in selected}
     selected_raw_bundles = list(selected_raw_bundle_map.values())
     _render_master_year_filter_sidebar(selected_raw_bundles, "comparison")
-    _render_master_phase_filter_sidebar(selected_raw_bundles, "comparison")
     _render_master_destination_filter_sidebar(selected_raw_bundles, "comparison")
+    _render_master_phase_filter_sidebar(selected_raw_bundles, "comparison")
     bundles = {name: _scoped_bundle(st.session_state.models[name]) for name in selected}
 
     tolerance = st.number_input(
@@ -7126,8 +7126,8 @@ def render_reports() -> None:
 
     raw_bundles = list(st.session_state.models.values())
     _render_master_year_filter_sidebar(raw_bundles, "reports")
-    _render_master_phase_filter_sidebar(raw_bundles, "reports")
     _render_master_destination_filter_sidebar(raw_bundles, "reports")
+    _render_master_phase_filter_sidebar(raw_bundles, "reports")
 
     scoped_bundles = {name: _scoped_bundle(bundle) for name, bundle in st.session_state.models.items()}
     model_names = list(scoped_bundles.keys())
