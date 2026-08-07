@@ -5109,7 +5109,7 @@ def render_setup() -> None:
         default_name = Path(str(st.session_state.setup_filename)).stem.replace("-", "_").replace(" ", "_")[:45]
         model_name = identity[0].text_input("Model name", value=default_name)
         model_type = identity[1].selectbox("Model type", MODEL_TYPES)
-        report_title = identity[2].text_input("Report title", value=_display_report_title(f"{model_name} Evaluation", "Block Model Evaluation"))
+        report_title = identity[2].text_input("Report title", value=model_name)
 
         st.markdown("#### Core variables")
         core = st.columns(4)
@@ -6193,7 +6193,7 @@ def render_comparison() -> None:
         "Global volume tolerance (%)",
         min_value=0.0,
         max_value=10.0,
-        value=float(validation_defaults().get("global_volume_tolerance_pct", 0.10)),
+        value=1.0,
         step=0.01,
         format="%.4f",
     )
