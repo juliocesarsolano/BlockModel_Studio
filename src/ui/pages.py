@@ -4974,23 +4974,6 @@ def _copy_setup_configuration_from_model(
 def render_setup() -> None:
     page_header("Model Setup", "Load a block-model tabulation and map the variables required for analysis.")
 
-    _setup_step(1, "Define the global model scope", "Choose which BLK_MODEL records will be available throughout the workspace. Value 0 is always excluded.")
-    master_options = list(MASTER_BLK_MODEL_OPTIONS)
-    current_master = st.session_state.get("master_blk_model_scope", "1 - In situ")
-    setup_master_key = "setup_master_blk_model_scope_selector"
-    if st.session_state.get(setup_master_key) != current_master:
-        st.session_state[setup_master_key] = current_master
-    setup_master = st.selectbox(
-        "Default model scope",
-        options=master_options,
-        index=master_options.index(current_master) if current_master in master_options else 0,
-        key=setup_master_key,
-        help="1 = in situ, 2 = stockpiles. Select 1+2 only when you intentionally want both block-model scopes.",
-    )
-    if setup_master != current_master:
-        st.session_state.master_blk_model_scope = setup_master
-        st.rerun()
-
     saved_notice = st.session_state.pop("setup_model_saved_notice", None)
     if saved_notice:
         saved_name = str(saved_notice.get("name", "Model"))
@@ -5006,7 +4989,7 @@ def render_setup() -> None:
 
     _render_configured_models_manager("setup")
 
-    _setup_step(2, "Load a model tabulation", "Upload the CSV, TXT or Excel output produced from your block-model query.")
+    _setup_step(1, "Load a model tabulation", "Upload the CSV, TXT or Excel output produced from your block-model query.")
     uploader_version = int(st.session_state.get("setup_uploader_version", 0))
     uploaded = st.file_uploader(
         "CSV or Excel model tabulation",
@@ -5119,7 +5102,7 @@ def render_setup() -> None:
                     f"Configuration copied from '{source_label}'. All {len(matched_items)} mapped variables were found."
                 )
 
-    _setup_step(3, "Map model variables", "Confirm identity, mass and volume fields, grades, categories, cleaning rules and display units.")
+    _setup_step(2, "Map model variables", "Confirm identity, mass and volume fields, grades, categories, cleaning rules and display units.")
     with st.form("model_configuration"):
         st.markdown("#### Model identity")
         identity = st.columns([1.1, 1.0, 1.7])
@@ -5255,7 +5238,7 @@ def render_setup() -> None:
         year_min = int(year_limits[0].number_input("Minimum valid year", key="setup_year_min"))
         year_max = int(year_limits[1].number_input("Maximum valid year", key="setup_year_max"))
 
-        _setup_step(4, "Validate and save", "Create the configured model in this workspace and make it available to Evaluation, Comparison and Reports.")
+        _setup_step(3, "Validate and save", "Create the configured model in this workspace and make it available to Evaluation, Comparison and Reports.")
         submitted = st.form_submit_button("Validate and save model", type="primary", use_container_width=True)
 
     if submitted:
