@@ -79,7 +79,7 @@ class ModelConfig:
     year_min: int = 2022
     year_max: int = 2050
     reject_negative_grades: bool = True
-    require_positive_grades: bool = False
+    require_positive_grades: bool = True
 
     @property
     def grade_columns(self) -> list[str]:
@@ -111,7 +111,7 @@ class ModelConfig:
         data["grade_specs"] = [GradeSpec(**item) for item in data.get("grade_specs", [])]
         data["category_specs"] = [CategorySpec(**item) for item in data.get("category_specs", [])]
         data.setdefault("reject_negative_grades", True)
-        data.setdefault("require_positive_grades", False)
+        data.setdefault("require_positive_grades", True)
         return cls(**data)
 
 

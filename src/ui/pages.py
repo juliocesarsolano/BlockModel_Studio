@@ -98,7 +98,6 @@ from src.core.metrics import (
     contained_metal,
     grouped_summary,
     model_summary,
-    negative_counts,
     period_summary,
     tonnage_column_name,
     tonnage_divisor,
@@ -165,6 +164,47 @@ def _barrick_logo_html(width_px: int = 118) -> str:
 # Support the safe key workflow.
 def _safe_key(text: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in text)[:60]
+
+
+def _configured_model_name(bundle: ModelBundle, fallback: str) -> str:
+    """Return the user-defined Model Setup name used as the workspace model key.
+
+    Model Setup saves each configured model in ``st.session_state.models`` using
+    the value entered by the user in the ``Model name`` field as the dictionary
+    key. That workspace key is therefore the authoritative visible model name.
+    ``config.model_name`` is retained only as a fallback for legacy/incomplete
+    model objects.
+    """
+    workspace_name = str(fallback or "").strip()
+    if workspace_name:
+        return workspace_name
+    configured = str(getattr(bundle.config, "model_name", "") or "").strip()
+    return configured or "Model"
+
+
+def _model_display_names(bundles: dict[str, ModelBundle]) -> dict[str, str]:
+    """Map internal workspace keys to user-defined model names for presentation only."""
+    return {key: _configured_model_name(bundle, key) for key, bundle in bundles.items()}
+
+
+def _destination_report_title(bundle: ModelBundle, fallback: str | None = None) -> str:
+    """Return the Report title configured by the user for destination tables.
+
+    ``Report title`` is intentionally distinct from ``Model name``:
+    - Model name identifies the configured model inside the workspace.
+    - Report title is the visible heading used in the vertical destination
+      tabulation and its comparison table.
+    """
+    report_title = str(getattr(bundle.config, "report_title", "") or "").strip()
+    if report_title:
+        return report_title
+
+    fallback_text = str(fallback or "").strip()
+    if fallback_text:
+        return fallback_text
+
+    model_name = str(getattr(bundle.config, "model_name", "") or "").strip()
+    return model_name or "Model"
 
 
 # Function: _default_index
@@ -2012,9 +2052,13 @@ def _comparison_filter_note_items(
     reference_model: str | None = None,
     extra_items: list[str] | None = None,
 ) -> list[str]:
-    items = [f"Models compared: {', '.join(selected_model_names)}"]
+    display_names = _model_display_names(bundles)
+    items = [f"Models compared: {', '.join(display_names.get(name, name) for name in selected_model_names)}"]
     if bundles:
-        row_counts = [f"{name}: {len(bundle.data):,} rows" for name, bundle in bundles.items()]
+        row_counts = [
+            f"{display_names.get(name, name)}: {len(bundle.data):,} rows"
+            for name, bundle in bundles.items()
+        ]
         items.append("Rows after master scope: " + "; ".join(row_counts))
         if any(_block_model_column(bundle.config, bundle.data) for bundle in bundles.values()):
             items.append(f"Master BLK_MODEL scope: {st.session_state.get('master_blk_model_scope', '1 - In situ')}")
@@ -2029,7 +2073,7 @@ def _comparison_filter_note_items(
                 "CUT/NONE/invalid values excluded"
             )
     if reference_model:
-        items.append(f"Reference model for Δ%: {reference_model}")
+        items.append(f"Reference model for Δ%: {display_names.get(reference_model, reference_model)}")
     if extra_items:
         items.extend(extra_items)
     return items
@@ -2641,9 +2685,20 @@ def _contained_ounces_for_label(data: pd.DataFrame, config: ModelConfig, label: 
 # Function: _destination_summary_table
 # Build the vertical destination table for ore, waste, strip ratio, weighted
 # grades and contained Au/Ag metal.
-def _destination_summary_table(data: pd.DataFrame, config: ModelConfig, model_name: str) -> pd.DataFrame:
+def _destination_summary_table(
+    data: pd.DataFrame,
+    config: ModelConfig,
+    model_name: str | None = None,
+) -> pd.DataFrame:
     dest_col = config.column_for_role("Destination")
-    value_col = model_name or "Model Name"
+
+    # The vertical destination table is a reporting table. Its visible heading
+    # therefore follows the user-entered ``Report title`` from Model Setup,
+    # not the internal/workspace ``Model name``.
+    configured_report_title = str(getattr(config, "report_title", "") or "").strip()
+    workspace_name = str(model_name or "").strip()
+    configured_name = str(getattr(config, "model_name", "") or "").strip()
+    value_col = configured_report_title or workspace_name or configured_name or "Model"
     if not dest_col or dest_col not in data.columns:
         return pd.DataFrame(columns=["Model", "Unit", value_col, "__row_type__"])
 
@@ -2830,7 +2885,7 @@ def _comparison_ore_kt_by_phase_table(bundles: dict[str, ModelBundle], selected_
         ore[config.mass_column] = pd.to_numeric(ore[config.mass_column], errors="coerce").fillna(0).clip(lower=0)
         grouped = ore.groupby(phase_col, dropna=False, observed=True)[config.mass_column].sum().reset_index()
         grouped["Phase"] = grouped[phase_col].astype(str).str.strip()
-        grouped["Model"] = model_name
+        grouped["Model"] = _configured_model_name(bundle, model_name)
         grouped["Ore Kt"] = grouped[config.mass_column] / 1_000.0
         rows.extend(grouped[["Model", "Phase", "Ore Kt"]].to_dict("records"))
 
@@ -2839,8 +2894,13 @@ def _comparison_ore_kt_by_phase_table(bundles: dict[str, ModelBundle], selected_
 
     table = pd.DataFrame(rows)
     phase_order = sorted(table["Phase"].dropna().unique().tolist(), key=_natural_phase_sort_key)
+    display_order = [
+        _configured_model_name(bundles[name], name)
+        for name in selected_model_names
+        if name in bundles
+    ]
     table["Phase"] = pd.Categorical(table["Phase"], categories=phase_order, ordered=True)
-    table["Model"] = pd.Categorical(table["Model"], categories=selected_model_names, ordered=True)
+    table["Model"] = pd.Categorical(table["Model"], categories=display_order, ordered=True)
     return table.sort_values(["Phase", "Model"]).reset_index(drop=True)
 
 
@@ -2852,10 +2912,15 @@ def _plot_comparison_ore_kt_by_phase(bundles: dict[str, ModelBundle], selected_m
         st.info("Configure Phase/Pit_Phase, Destination and tonnage columns in the selected models to activate the Ore Kt by Phase comparison chart.")
         return
 
+    display_order = [
+        _configured_model_name(bundles[name], name)
+        for name in selected_model_names
+        if name in bundles
+    ]
     model_color_sequence = ["#03547C", "#A39161", *MODEL_COLORS]
     color_map = {
         model_name: model_color_sequence[index % len(model_color_sequence)]
-        for index, model_name in enumerate(selected_model_names)
+        for index, model_name in enumerate(display_order)
     }
 
     fig = px.bar(
@@ -2867,7 +2932,7 @@ def _plot_comparison_ore_kt_by_phase(bundles: dict[str, ModelBundle], selected_m
         title="Ore Kt by Phase",
         labels={"Phase": "Phase", "Ore Kt": "Ore Kt"},
         color_discrete_map=color_map,
-        category_orders={"Model": selected_model_names, "Phase": list(table["Phase"].cat.categories)},
+        category_orders={"Model": display_order, "Phase": list(table["Phase"].cat.categories)},
     )
     fig.update_traces(marker_line_color="white", marker_line_width=0.5)
     fig.update_layout(
@@ -2902,7 +2967,8 @@ def _render_resource_by_destination(
         st.warning("No rows match the current filters.")
         return
 
-    table = _destination_summary_table(filtered, config, model_name)
+    display_model_name = _configured_model_name(bundle, model_name)
+    table = _destination_summary_table(filtered, config, display_model_name)
     _render_destination_summary_table(table)
     _render_table_filter_note(
         _table_filter_note_items(
@@ -2910,14 +2976,20 @@ def _render_resource_by_destination(
             source_data=source_data,
             final_data=filtered,
             filters=filters,
-            model_name=model_name,
+            model_name=display_model_name,
             extra_items=["Destination table grouping: ore, waste, grades and contained metal by destination code"],
         )
     )
-    _add_scene_button(f"{model_name} - resource tabulation by destination", "Resource by destination", [model_name], table.drop(columns=["__row_type__"], errors="ignore"), filters)
+    _add_scene_button(
+        f"{display_model_name} - resource tabulation by destination",
+        "Resource by destination",
+        [display_model_name],
+        table.drop(columns=["__row_type__"], errors="ignore"),
+        filters,
+    )
 
     st.markdown("#### Ore Kt by Phase")
-    _plot_ore_kt_by_phase(filtered, config, model_name)
+    _plot_ore_kt_by_phase(filtered, config, display_model_name)
 
 
 # Function: _destination_table_with_row_keys
@@ -3005,14 +3077,24 @@ def _add_relative_difference_columns(rows: list[dict[str, Any]], model_names: li
 # Align destination rows across selected models and append relative-difference
 # columns against the chosen reference model.
 def _destination_comparison_table(bundles: dict[str, ModelBundle], reference_model_name: str | None = None) -> pd.DataFrame:
-    """Build the vertical destination table with one value column per selected model plus Δ% columns vs reference."""
+    """Build the vertical destination comparison using each model's Report title.
+
+    Workspace ``Model name`` values remain the internal identifiers used for
+    model selection and reference-model logic. Visible table columns use the
+    user-entered ``Report title`` from Model Setup.
+    """
     row_meta: dict[str, dict[str, Any]] = {}
     model_values: dict[str, dict[str, Any]] = {}
+    report_titles = {
+        key: _destination_report_title(bundle, key)
+        for key, bundle in bundles.items()
+    }
 
-    for model_name, bundle in bundles.items():
-        table = _destination_summary_table(bundle.data, bundle.config, model_name)
+    for model_key, bundle in bundles.items():
+        report_title = report_titles[model_key]
+        table = _destination_summary_table(bundle.data, bundle.config, report_title)
         if table.empty:
-            model_values[model_name] = {}
+            model_values[model_key] = {}
             continue
 
         keyed = _destination_table_with_row_keys(table)
@@ -3021,7 +3103,7 @@ def _destination_comparison_table(bundles: dict[str, ModelBundle], reference_mod
             if column not in {"Model", "Unit", "__row_type__", "__row_key__"}
         ]
         if not value_columns:
-            model_values[model_name] = {}
+            model_values[model_key] = {}
             continue
         value_col = value_columns[0]
 
@@ -3035,14 +3117,14 @@ def _destination_comparison_table(bundles: dict[str, ModelBundle], reference_mod
                     "__row_type__": row.get("__row_type__", "normal"),
                 }
             values[row_key] = row.get(value_col, "-")
-        model_values[model_name] = values
+        model_values[model_key] = values
 
-    model_names = list(bundles.keys())
+    model_keys = list(bundles.keys())
     rows: list[dict[str, Any]] = []
     for row_key, meta in row_meta.items():
         row = dict(meta)
-        for model_name in model_names:
-            row[model_name] = model_values.get(model_name, {}).get(row_key, "-")
+        for model_key in model_keys:
+            row[report_titles[model_key]] = model_values.get(model_key, {}).get(row_key, "-")
         rows.append(row)
 
     category_rows = [
@@ -3059,19 +3141,22 @@ def _destination_comparison_table(bundles: dict[str, ModelBundle], reference_mod
             "Unit": default_unit,
             "__row_type__": "separator" if row_index == 0 else "normal",
         }
-        for model_name, bundle in bundles.items():
+        for model_key, bundle in bundles.items():
+            report_title = report_titles[model_key]
             category_col = bundle.config.column_for_role("Category")
             if not category_col or category_col not in bundle.data.columns:
-                row[model_name] = "-"
+                row[report_title] = "-"
                 continue
             mask = _category_mask(bundle.data, category_col, category_key)
             tonnes = _tonnes_for_frame(bundle.data[mask], bundle.config)
             display_tonnes = _display_tonnage_value(tonnes, bundle.config)
             decimals = max(2, int(bundle.config.tonnage_decimals))
-            row[model_name] = _format_destination_value(display_tonnes, decimals)
+            row[report_title] = _format_destination_value(display_tonnes, decimals)
         rows.append(row)
 
-    return _add_relative_difference_columns(rows, model_names, reference_model_name)
+    display_model_names = [report_titles[key] for key in model_keys]
+    reference_display_name = report_titles.get(reference_model_name, reference_model_name) if reference_model_name else None
+    return _add_relative_difference_columns(rows, display_model_names, reference_display_name)
 
 
 # Function: _render_comparison_resource_by_destination
@@ -3081,11 +3166,13 @@ def _render_comparison_resource_by_destination(bundles: dict[str, ModelBundle], 
     st.subheader("Tabulation by Destination")
     st.caption("Select the reference model used to calculate the relative difference columns. Δ% = (model - reference) / reference × 100.")
 
+    display_names = _model_display_names(bundles)
     reference_model = st.selectbox(
         "Reference model",
         selected_model_names,
         index=0,
         key="comparison_destination_reference_model",
+        format_func=lambda key: display_names.get(key, key),
         help="Relative differences are calculated against this model and reported without decimals.",
     )
     st.info("Note: comparing more than 5 models can affect the correct table presentation because of horizontal space limits.")
@@ -3109,9 +3196,9 @@ def _render_comparison_resource_by_destination(bundles: dict[str, ModelBundle], 
     _add_scene_button(
         "Comparison - resource tabulation by destination",
         "Comparison resource by destination",
-        selected_model_names,
+        [display_names.get(name, name) for name in selected_model_names],
         table.drop(columns=["__row_type__"], errors="ignore"),
-        {"Scope": "Comparison master scope", "Reference model": reference_model},
+        {"Scope": "Comparison master scope", "Reference model": display_names.get(reference_model, reference_model)},
     )
 
     st.markdown("#### Ore Kt by Phase")
@@ -3612,18 +3699,7 @@ def _render_year_distribution_section(
 
     for tab, (role, title, color_map) in zip(tabs, temporal_specs, strict=True):
         with tab:
-            table = _plot_stacked_by_year(data, config, role, title, color_map, percent=True)
-            if not table.empty:
-                st.markdown(f"##### {time_role} table")
-                _render_barrick_table(table, config)
-                _render_table_filter_note(
-                    _table_filter_note_items(
-                        config,
-                        final_data=data,
-                        filters=filters,
-                        extra_items=[f"Temporal grouping: {role} by {time_role}"],
-                    )
-                )
+            _plot_stacked_by_year(data, config, role, title, color_map, percent=True)
 
 
 # Function: _plot_destination_by_bench_with_grade
@@ -3756,14 +3832,16 @@ def _render_variable_controls(bundle: ModelBundle, model_name: str) -> None:
 
         validation_cols = st.columns(4)
         reject_negative_grades = validation_cols[0].checkbox(
-            "Reject negative grades",
-            value=bool(config.reject_negative_grades),
-            help="When active, negative grade values are validation errors instead of warnings.",
+            "Negative grades are errors",
+            value=True,
+            disabled=True,
+            help="Mandatory validation rule: grade values below zero are errors.",
         )
         require_positive_grades = validation_cols[1].checkbox(
-            "Grades must be > 0",
-            value=bool(config.require_positive_grades),
-            help="When active, zero and negative grade values are validation errors.",
+            "Require grades > 0 (zero = error)",
+            value=True,
+            disabled=True,
+            help="Mandatory validation rule: grade values must be strictly greater than zero; zero is an error.",
         )
         year_min = int(validation_cols[2].number_input("Minimum valid year", value=int(config.year_min)))
         year_max = int(validation_cols[3].number_input("Maximum valid year", value=int(config.year_max)))
@@ -3785,60 +3863,6 @@ def _render_variable_controls(bundle: ModelBundle, model_name: str) -> None:
         st.success("Controls applied and model revalidated.")
         st.rerun()
 
-    st.markdown("#### Configured core variables")
-    variable_rows = [
-        {"Role": "Tonnage", "Column": config.mass_column, "Label": "Tonnage", "Control": "No nulls / no negatives"},
-        {"Role": "Volume", "Column": config.volume_column or "N/A", "Label": "Volume", "Control": "No negatives"},
-    ]
-    variable_rows.extend(
-        {"Role": spec.role, "Column": spec.column, "Label": spec.label, "Control": "Categorical filter/group"}
-        for spec in config.category_specs
-    )
-    st.dataframe(_left_aligned_table_style(pd.DataFrame(variable_rows)), use_container_width=True, hide_index=True)
-    _render_table_filter_note(
-        _table_filter_note_items(
-            config,
-            source_data=bundle.data,
-            final_data=scoped_data,
-            model_name=model_name,
-            extra_items=["This is a configuration table; no additional analytical filters are applied."],
-        )
-    )
-
-    st.markdown("#### Configured grade variables")
-    grade_rows = [
-        {
-            "Column": spec.column,
-            "Label": spec.label,
-            "Unit": spec.unit,
-            "Decimals": spec.decimals,
-            "Negative policy": "Error" if config.reject_negative_grades else "Warning",
-            "Positive-only": "Yes" if config.require_positive_grades else "No",
-        }
-        for spec in config.grade_specs
-    ]
-    st.dataframe(_left_aligned_table_style(pd.DataFrame(grade_rows)), use_container_width=True, hide_index=True)
-    _render_table_filter_note(
-        _table_filter_note_items(
-            config,
-            source_data=bundle.data,
-            final_data=scoped_data,
-            model_name=model_name,
-            extra_items=["This is a configured grade-variable list; no additional analytical filters are applied."],
-        )
-    )
-
-    st.markdown("#### Negative/null/zero diagnostics")
-    st.dataframe(_left_aligned_table_style(negative_counts(scoped_data, config)), use_container_width=True, hide_index=True)
-    _render_table_filter_note(
-        _table_filter_note_items(
-            config,
-            source_data=bundle.data,
-            final_data=scoped_data,
-            model_name=model_name,
-            extra_items=["Diagnostics are calculated after master scope only; sidebar analytical filters are not applied in this controls tab."],
-        )
-    )
 
 
 # Function: _render_resource_dashboard
@@ -3932,28 +3956,6 @@ def _render_resource_dashboard(
         _plot_role_distribution(filtered, config, "Category", "Resource Category Tonnes Distribution", RESOURCE_CATEGORY_COLORS)
     with cat_dest_cols[1]:
         _plot_role_distribution(filtered, config, "Destination", "Destination Tonnes Distribution", DESTINATION_COLORS)
-
-    st.markdown("#### Supporting Tables")
-    table_tabs = st.tabs(["Mettype by bench", "Category by bench", "Destination by bench"])
-    bench_col = config.column_for_role("Bench")
-    for tab, role in zip(table_tabs, ["Mettype", "Category", "Destination"], strict=True):
-        with tab:
-            role_col = config.column_for_role(role)
-            if bench_col and role_col:
-                table = grouped_summary(filtered, config, [bench_col, role_col])
-                _render_barrick_table(table, config)
-                _render_table_filter_note(
-                    _table_filter_note_items(
-                        config,
-                        source_data=source_data,
-                        final_data=filtered,
-                        filters=filters,
-                        model_name=model_name,
-                        extra_items=[f"Supporting table grouping: Bench by {role}"],
-                    )
-                )
-            else:
-                st.info(f"Bench and {role} roles are required.")
 
     _render_year_distribution_section(filtered, config, destination_mode, filters)
 
@@ -4322,16 +4324,6 @@ def _render_grade_distribution_multiplot(data: pd.DataFrame, config: ModelConfig
         st.warning(f"{excluded_total:,} zero, negative or non-numeric values were excluded from the selected distributions.")
     if all(values.empty for values in plot_values.values()):
         st.info("No positive values are available for the selected variables.")
-        with st.expander("Distribution exclusion summary", expanded=True):
-            st.dataframe(flagged, use_container_width=True, hide_index=True)
-            _render_table_filter_note(
-                _table_filter_note_items(
-                    config,
-                    final_data=data,
-                    model_name=model_name,
-                    extra_items=["Distribution exclusion summary uses the selected distribution variables and positive-value rule."],
-                )
-            )
         return
 
     rows, cols = 2, 2
@@ -4392,16 +4384,6 @@ def _render_grade_distribution_multiplot(data: pd.DataFrame, config: ModelConfig
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    with st.expander("Distribution exclusion summary", expanded=False):
-        st.dataframe(flagged, use_container_width=True, hide_index=True)
-        _render_table_filter_note(
-            _table_filter_note_items(
-                config,
-                final_data=data,
-                model_name=model_name,
-                extra_items=["Distribution exclusion summary uses the selected distribution variables and positive-value rule."],
-            )
-        )
 
 
 # Function: _render_validation_details
@@ -4450,29 +4432,6 @@ def _render_validation_details(bundle: ModelBundle, model_name: str) -> None:
                 final_data=bundle.data,
                 model_name=model_name,
                 extra_items=["Validation issues are calculated after master scope only."],
-            )
-        )
-
-    control_summary = _validation_control_summary(bundle.data, config)
-    if not control_summary.empty:
-        st.markdown("#### Year/Month, bench and category controls")
-        st.dataframe(
-            control_summary,
-            use_container_width=True,
-            hide_index=True,
-            column_config=_text_table_column_config(
-                control_summary,
-                narrow_columns=("Control", "Valid records", "Flagged records"),
-                medium_columns=("Column", "Loaded range"),
-                wide_columns=("Rule",),
-            ),
-        )
-        _render_table_filter_note(
-            _table_filter_note_items(
-                config,
-                final_data=bundle.data,
-                model_name=model_name,
-                extra_items=["Control summary is calculated after master scope only."],
             )
         )
 
@@ -4645,13 +4604,6 @@ def render_home() -> None:
     else:
         st.error("The embedded Vulcan query specification is unavailable.")
 
-    home_actions = st.columns(3)
-    if home_actions[0].button("Configure a model", type="primary", use_container_width=True):
-        move_to("Model Setup")
-    if home_actions[1].button("Open evaluation", use_container_width=True, disabled=not st.session_state.models):
-        move_to("Model Evaluation")
-    if home_actions[2].button("Compare models", use_container_width=True, disabled=len(st.session_state.models) < 2):
-        move_to("Model Comparison")
 
     components.html(
         """
@@ -4903,6 +4855,120 @@ def render_home() -> None:
             )
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
+# Function: _reset_setup_mapping_widget_state
+# Clear model-mapping widgets when a new source tabulation is loaded.
+def _reset_setup_mapping_widget_state() -> None:
+    exact_keys = {
+        "setup_mass_column",
+        "setup_volume_column",
+        "setup_volume_unit",
+        "setup_tonnage_unit",
+        "setup_grade_columns",
+        "setup_category_columns",
+        "setup_null_tokens",
+        "setup_decimal_separator",
+        "setup_thousands_separator",
+        "setup_tonnage_decimals",
+        "setup_grade_decimals",
+        "setup_year_min",
+        "setup_year_max",
+    }
+    prefixes = (
+        "grade_source_",
+        "grade_label_",
+        "grade_unit_",
+        "grade_dec_",
+        "cat_label_",
+        "cat_role_",
+    )
+    for key in list(st.session_state.keys()):
+        if key in exact_keys or str(key).startswith(prefixes):
+            del st.session_state[key]
+
+
+# Function: _copy_setup_configuration_from_model
+# Copy reusable Model Setup mappings from one configured model to a new source.
+def _copy_setup_configuration_from_model(
+    source_bundle: ModelBundle,
+    target_columns: list[str],
+    *,
+    copy_core: bool = True,
+    copy_grades: bool = True,
+    copy_categories: bool = True,
+    copy_preferences: bool = True,
+) -> dict[str, Any]:
+    """Populate Model Setup widgets from an existing model where column names match exactly.
+
+    Model identity fields (Model name, Model type and Report title) are intentionally
+    not copied. Missing columns are reported and left for manual configuration.
+    """
+    config = source_bundle.config
+    target_set = set(target_columns)
+    matched: list[str] = []
+    missing: list[str] = []
+
+    if copy_core:
+        if config.mass_column in target_set:
+            st.session_state.setup_mass_column = config.mass_column
+            matched.append(f"Mass: {config.mass_column}")
+        else:
+            missing.append(f"Mass: {config.mass_column}")
+
+        if config.volume_column:
+            if config.volume_column in target_set:
+                st.session_state.setup_volume_column = config.volume_column
+                matched.append(f"Volume: {config.volume_column}")
+            else:
+                missing.append(f"Volume: {config.volume_column}")
+        else:
+            st.session_state.setup_volume_column = "None"
+
+        if config.volume_unit in VOLUME_UNITS:
+            st.session_state.setup_volume_unit = config.volume_unit
+        if config.tonnage_unit in TONNAGE_UNITS:
+            st.session_state.setup_tonnage_unit = config.tonnage_unit
+
+    if copy_grades:
+        matched_grade_specs = [spec for spec in config.grade_specs if spec.column in target_set]
+        missing_grade_specs = [spec for spec in config.grade_specs if spec.column not in target_set]
+        st.session_state.setup_grade_columns = [spec.column for spec in matched_grade_specs]
+        for index, spec in enumerate(matched_grade_specs, start=1):
+            safe = _safe_key(spec.column)
+            st.session_state[f"grade_source_{index}_{safe}"] = spec.column
+            st.session_state[f"grade_label_{index}_{safe}"] = spec.label
+            st.session_state[f"grade_unit_{index}_{safe}"] = spec.unit if spec.unit in GRADE_UNITS else _default_grade_unit(spec.column)
+            st.session_state[f"grade_dec_{index}_{safe}"] = int(spec.decimals if spec.decimals is not None else config.grade_decimals)
+            matched.append(f"Grade: {spec.column}")
+        missing.extend(f"Grade: {spec.column}" for spec in missing_grade_specs)
+
+    if copy_categories:
+        matched_category_specs = [spec for spec in config.category_specs if spec.column in target_set]
+        missing_category_specs = [spec for spec in config.category_specs if spec.column not in target_set]
+        st.session_state.setup_category_columns = [spec.column for spec in matched_category_specs]
+        for index, spec in enumerate(matched_category_specs, start=1):
+            safe = _safe_key(spec.column)
+            st.session_state[f"cat_label_{index}_{safe}"] = spec.label
+            st.session_state[f"cat_role_{index}_{safe}"] = spec.role if spec.role in CATEGORY_ROLES else "Other"
+            matched.append(f"Category: {spec.column}")
+        missing.extend(f"Category: {spec.column}" for spec in missing_category_specs)
+
+    if copy_preferences:
+        st.session_state.setup_null_tokens = ",".join(map(str, config.null_tokens))
+        st.session_state.setup_decimal_separator = config.decimal_separator if config.decimal_separator in {".", ","} else "."
+        stored_thousands = config.thousands_separator or "None"
+        st.session_state.setup_thousands_separator = stored_thousands if stored_thousands in {",", ".", "None"} else ","
+        st.session_state.setup_tonnage_decimals = int(config.tonnage_decimals)
+        st.session_state.setup_grade_decimals = int(config.grade_decimals)
+        st.session_state.setup_year_min = int(config.year_min)
+        st.session_state.setup_year_max = int(config.year_max)
+
+    return {
+        "source": str(config.model_name or "Model"),
+        "matched": matched,
+        "missing": missing,
+    }
+
+
 # Function: render_setup
 # Render model upload, variable mapping, units and validation configuration.
 def render_setup() -> None:
@@ -4953,6 +5019,8 @@ def render_setup() -> None:
             try:
                 st.session_state.setup_raw = load_dataframe(uploaded.name, uploaded.getvalue())
                 st.session_state.setup_filename = signature
+                _reset_setup_mapping_widget_state()
+                st.session_state.pop("setup_copy_configuration_notice", None)
                 st.success(f"Loaded {uploaded.name}")
             except Exception as exc:
                 st.error(f"Could not read source file: {exc}")
@@ -4982,6 +5050,75 @@ def render_setup() -> None:
         st.dataframe(frame.head(100), use_container_width=True, hide_index=True)
 
     columns = list(frame.columns)
+
+    if st.session_state.models:
+        st.markdown("#### Copy setup from existing model")
+        copy_cols = st.columns([2.3, 1.0])
+        source_model_keys = list(st.session_state.models)
+        current_copy_source = st.session_state.get("setup_copy_source_model", source_model_keys[0])
+        if current_copy_source not in source_model_keys:
+            current_copy_source = source_model_keys[0]
+        st.session_state.setup_copy_source_model = current_copy_source
+        copy_source = copy_cols[0].selectbox(
+            "Configuration source",
+            source_model_keys,
+            key="setup_copy_source_model",
+            format_func=lambda key: (
+                f"{key} — {st.session_state.models[key].config.report_title}"
+                if str(st.session_state.models[key].config.report_title or "").strip()
+                else str(key)
+            ),
+            help=(
+                "Copies reusable mappings and parameters from an existing configured model. "
+                "Model name, Model type and Report title remain independent for the new model."
+            ),
+        )
+        copy_sections = st.columns(4)
+        copy_core = copy_sections[0].checkbox("Core variables", value=True, key="setup_copy_core")
+        copy_grades = copy_sections[1].checkbox("Grade variables", value=True, key="setup_copy_grades")
+        copy_categories = copy_sections[2].checkbox("Categorical variables", value=True, key="setup_copy_categories")
+        copy_preferences = copy_sections[3].checkbox("Units / controls", value=True, key="setup_copy_preferences")
+
+        copy_requested = copy_core or copy_grades or copy_categories or copy_preferences
+        if copy_cols[1].button(
+            "Apply configuration",
+            type="secondary",
+            use_container_width=True,
+            disabled=not copy_requested,
+        ):
+            _reset_setup_mapping_widget_state()
+            notice = _copy_setup_configuration_from_model(
+                st.session_state.models[copy_source],
+                columns,
+                copy_core=copy_core,
+                copy_grades=copy_grades,
+                copy_categories=copy_categories,
+                copy_preferences=copy_preferences,
+            )
+            st.session_state.setup_copy_configuration_notice = notice
+            st.rerun()
+
+        copy_notice = st.session_state.get("setup_copy_configuration_notice")
+        if isinstance(copy_notice, dict):
+            matched_items = list(copy_notice.get("matched", []))
+            missing_items = list(copy_notice.get("missing", []))
+            source_label = str(copy_notice.get("source", copy_source))
+            if missing_items:
+                st.warning(
+                    f"Configuration copied from '{source_label}'. "
+                    f"Matched {len(matched_items)} mapped variables; {len(missing_items)} require review."
+                )
+                with st.expander("Review copied configuration", expanded=False):
+                    if matched_items:
+                        st.markdown("**Matched**")
+                        st.markdown("\n".join(f"- ✓ {item}" for item in matched_items))
+                    st.markdown("**Not found in the new file**")
+                    st.markdown("\n".join(f"- ✕ {item}" for item in missing_items))
+            else:
+                st.success(
+                    f"Configuration copied from '{source_label}'. All {len(matched_items)} mapped variables were found."
+                )
+
     _setup_step(3, "Map model variables", "Confirm identity, mass and volume fields, grades, categories, cleaning rules and display units.")
     with st.form("model_configuration"):
         st.markdown("#### Model identity")
@@ -4994,16 +5131,26 @@ def render_setup() -> None:
         st.markdown("#### Core variables")
         core = st.columns(4)
         mass_index = _default_index(columns, column_aliases().get("mass_column_aliases", ["TONNES", "TOTAL_MASS", "MASS", "TONNAGE"]))
-        mass_column = core[0].selectbox("Tonnage / mass column", columns, index=mass_index)
+        if st.session_state.get("setup_mass_column") not in columns:
+            st.session_state.setup_mass_column = columns[mass_index]
+        mass_column = core[0].selectbox("Tonnage / mass column", columns, key="setup_mass_column")
+
         volume_options = ["None"] + columns
         volume_index = _default_index(volume_options, column_aliases().get("volume_column_aliases", ["VOLUME", "TOTAL_VOLUME", "TOTAL_VOLUMEN"]), fallback=0)
-        volume_selection = core[1].selectbox("Volume column", volume_options, index=volume_index)
+        if st.session_state.get("setup_volume_column") not in volume_options:
+            st.session_state.setup_volume_column = volume_options[volume_index]
+        volume_selection = core[1].selectbox("Volume column", volume_options, key="setup_volume_column")
         volume_column = None if volume_selection == "None" else volume_selection
+
         default_volume_unit = "Mm3"
-        volume_unit_index = VOLUME_UNITS.index(default_volume_unit) if default_volume_unit in VOLUME_UNITS else 0
-        volume_unit = core[2].selectbox("Volume unit", VOLUME_UNITS, index=volume_unit_index)
+        if st.session_state.get("setup_volume_unit") not in VOLUME_UNITS:
+            st.session_state.setup_volume_unit = default_volume_unit if default_volume_unit in VOLUME_UNITS else VOLUME_UNITS[0]
+        volume_unit = core[2].selectbox("Volume unit", VOLUME_UNITS, key="setup_volume_unit")
+
         default_tonnage_unit = display_defaults().get("default_tonnage_unit", "Mt")
-        tonnage_unit = core[3].selectbox("Display tonnage unit", TONNAGE_UNITS, index=TONNAGE_UNITS.index(default_tonnage_unit) if default_tonnage_unit in TONNAGE_UNITS else TONNAGE_UNITS.index("Mt"))
+        if st.session_state.get("setup_tonnage_unit") not in TONNAGE_UNITS:
+            st.session_state.setup_tonnage_unit = default_tonnage_unit if default_tonnage_unit in TONNAGE_UNITS else "Mt"
+        tonnage_unit = core[3].selectbox("Display tonnage unit", TONNAGE_UNITS, key="setup_tonnage_unit")
 
         st.markdown("#### Grade variables")
         grade_options = [
@@ -5011,7 +5158,11 @@ def render_setup() -> None:
             if column not in {mass_column, volume_column}
             and _is_grade_like_column(column)
         ]
-        grade_columns = st.multiselect("Select up to nine grade variables", grade_options, default=_suggest_grades(grade_options))
+        if "setup_grade_columns" not in st.session_state:
+            st.session_state.setup_grade_columns = _suggest_grades(grade_options)
+        else:
+            st.session_state.setup_grade_columns = [column for column in st.session_state.setup_grade_columns if column in grade_options]
+        grade_columns = st.multiselect("Select up to nine grade variables", grade_options, key="setup_grade_columns")
         st.form_submit_button(
             "Refresh grade-variable table",
             help="Apply the current grade selection and refresh the configuration rows below without saving the model.",
@@ -5022,11 +5173,23 @@ def render_setup() -> None:
         grade_specs: list[GradeSpec] = []
         for index, column in enumerate(grade_columns[:max_grades], start=1):
             row = st.columns([1.2, 1.2, 0.8, 0.8])
-            row[0].text_input("Column", value=column, disabled=True, key=f"grade_source_{index}_{_safe_key(column)}")
-            label = row[1].text_input("Display name", value=_default_grade_label(column), key=f"grade_label_{index}_{_safe_key(column)}")
+            safe = _safe_key(column)
+            source_key = f"grade_source_{index}_{safe}"
+            label_key = f"grade_label_{index}_{safe}"
+            unit_key = f"grade_unit_{index}_{safe}"
+            decimals_key = f"grade_dec_{index}_{safe}"
+            st.session_state[source_key] = column
+            if label_key not in st.session_state:
+                st.session_state[label_key] = _default_grade_label(column)
             default_unit = _default_grade_unit(column)
-            unit = row[2].selectbox("Unit", GRADE_UNITS, index=GRADE_UNITS.index(default_unit), key=f"grade_unit_{index}_{_safe_key(column)}")
-            decimals = int(row[3].number_input("Decimals", min_value=0, max_value=6, value=int(display_defaults().get("grade_decimals", 2)), key=f"grade_dec_{index}_{_safe_key(column)}"))
+            if st.session_state.get(unit_key) not in GRADE_UNITS:
+                st.session_state[unit_key] = default_unit
+            if decimals_key not in st.session_state:
+                st.session_state[decimals_key] = int(display_defaults().get("grade_decimals", 2))
+            row[0].text_input("Column", disabled=True, key=source_key)
+            label = row[1].text_input("Display name", key=label_key)
+            unit = row[2].selectbox("Unit", GRADE_UNITS, key=unit_key)
+            decimals = int(row[3].number_input("Decimals", min_value=0, max_value=6, key=decimals_key))
             grade_specs.append(GradeSpec(column=column, label=label, unit=unit, decimals=decimals))
 
         st.markdown("#### Categorical filters and grouping")
@@ -5035,7 +5198,11 @@ def render_setup() -> None:
             if column not in {mass_column, volume_column, *grade_columns}
             and _is_category_candidate(frame, column)
         ]
-        category_columns = st.multiselect("Select category/filter columns", category_options, default=_suggest_categories(frame))
+        if "setup_category_columns" not in st.session_state:
+            st.session_state.setup_category_columns = [column for column in _suggest_categories(frame) if column in category_options]
+        else:
+            st.session_state.setup_category_columns = [column for column in st.session_state.setup_category_columns if column in category_options]
+        category_columns = st.multiselect("Select category/filter columns", category_options, key="setup_category_columns")
         st.form_submit_button(
             "Refresh category-variable table",
             help="Apply the current category selection and refresh the configuration rows below without saving the model.",
@@ -5043,24 +5210,50 @@ def render_setup() -> None:
         category_specs: list[CategorySpec] = []
         for index, column in enumerate(category_columns, start=1):
             row = st.columns([1.3, 0.9])
-            label = row[0].text_input("Display name", value=column, key=f"cat_label_{index}_{_safe_key(column)}")
+            safe = _safe_key(column)
+            label_key = f"cat_label_{index}_{safe}"
+            role_key = f"cat_role_{index}_{safe}"
+            if label_key not in st.session_state:
+                st.session_state[label_key] = column
             inferred = _infer_role(column)
-            role = row[1].selectbox("Role", CATEGORY_ROLES, index=CATEGORY_ROLES.index(inferred), key=f"cat_role_{index}_{_safe_key(column)}")
+            if st.session_state.get(role_key) not in CATEGORY_ROLES:
+                st.session_state[role_key] = inferred
+            label = row[0].text_input("Display name", key=label_key)
+            role = row[1].selectbox("Role", CATEGORY_ROLES, key=role_key)
             category_specs.append(CategorySpec(column=column, label=label, role=role))
 
         st.markdown("#### Cleaning and display preferences")
         prefs = st.columns(5)
-        null_text = prefs[0].text_input("Null tokens", value=",".join(cleaning_defaults().get("null_tokens", ["NA", "N/A", "NULL", "None", "-99", "-999", "-9999"])))
+        if "setup_null_tokens" not in st.session_state:
+            st.session_state.setup_null_tokens = ",".join(cleaning_defaults().get("null_tokens", ["NA", "N/A", "NULL", "None", "-99", "-999", "-9999"]))
+        null_text = prefs[0].text_input("Null tokens", key="setup_null_tokens")
+
         default_decimal_separator = cleaning_defaults().get("decimal_separator", ".")
-        decimal_separator = prefs[1].selectbox("Decimal separator", [".", ","], index=0 if default_decimal_separator == "." else 1)
+        if st.session_state.get("setup_decimal_separator") not in {".", ","}:
+            st.session_state.setup_decimal_separator = default_decimal_separator if default_decimal_separator in {".", ","} else "."
+        decimal_separator = prefs[1].selectbox("Decimal separator", [".", ","], key="setup_decimal_separator")
+
         default_thousands_separator = cleaning_defaults().get("thousands_separator", ",")
         thousands_options = [",", ".", "None"]
-        thousands_separator = prefs[2].selectbox("Thousands separator", thousands_options, index=thousands_options.index(default_thousands_separator) if default_thousands_separator in thousands_options else 0)
-        tonnage_decimals = int(prefs[3].number_input("Tonnage decimals", min_value=0, max_value=6, value=int(display_defaults().get("tonnage_decimals", 2))))
-        grade_decimals = int(prefs[4].number_input("Default grade decimals", min_value=0, max_value=6, value=int(display_defaults().get("grade_decimals", 2))))
+        if st.session_state.get("setup_thousands_separator") not in thousands_options:
+            st.session_state.setup_thousands_separator = default_thousands_separator if default_thousands_separator in thousands_options else ","
+        thousands_separator = prefs[2].selectbox("Thousands separator", thousands_options, key="setup_thousands_separator")
+
+        if "setup_tonnage_decimals" not in st.session_state:
+            st.session_state.setup_tonnage_decimals = int(display_defaults().get("tonnage_decimals", 2))
+        tonnage_decimals = int(prefs[3].number_input("Tonnage decimals", min_value=0, max_value=6, key="setup_tonnage_decimals"))
+
+        if "setup_grade_decimals" not in st.session_state:
+            st.session_state.setup_grade_decimals = int(display_defaults().get("grade_decimals", 2))
+        grade_decimals = int(prefs[4].number_input("Default grade decimals", min_value=0, max_value=6, key="setup_grade_decimals"))
+
         year_limits = st.columns(2)
-        year_min = int(year_limits[0].number_input("Minimum valid year", value=int(validation_defaults().get("year_min", 1900))))
-        year_max = int(year_limits[1].number_input("Maximum valid year", value=int(validation_defaults().get("year_max", 2200))))
+        if "setup_year_min" not in st.session_state:
+            st.session_state.setup_year_min = int(validation_defaults().get("year_min", 1900))
+        if "setup_year_max" not in st.session_state:
+            st.session_state.setup_year_max = int(validation_defaults().get("year_max", 2200))
+        year_min = int(year_limits[0].number_input("Minimum valid year", key="setup_year_min"))
+        year_max = int(year_limits[1].number_input("Maximum valid year", key="setup_year_max"))
 
         _setup_step(4, "Validate and save", "Create the configured model in this workspace and make it available to Evaluation, Comparison and Reports.")
         submitted = st.form_submit_button("Validate and save model", type="primary", use_container_width=True)
@@ -5434,8 +5627,10 @@ def _model_description_recommended_checks(scoped_bundles: dict[str, ModelBundle]
 # Function: render_model_description
 # Render the model description application page.
 def render_model_description() -> None:
-    page_header("Model description", "Summarize configured model structure, categorical filters and scope before evaluation or comparison.")
+    header_placeholder = st.empty()
     if not st.session_state.models:
+        with header_placeholder.container():
+            page_header("Model description", "Summarize configured model structure, categorical filters and scope before evaluation or comparison.")
         _render_no_models_state("No models available for description")
         return
 
@@ -5443,6 +5638,9 @@ def render_model_description() -> None:
     _render_master_year_filter_sidebar(raw_bundles, "description")
     _render_master_destination_filter_sidebar(raw_bundles, "description")
     _render_master_phase_filter_sidebar(raw_bundles, "description")
+
+    with header_placeholder.container():
+        page_header("Model description", "Summarize configured model structure, categorical filters and scope before evaluation or comparison.")
 
     scoped_bundles = {name: _scoped_bundle(bundle) for name, bundle in st.session_state.models.items()}
 
@@ -5496,57 +5694,6 @@ def render_model_description() -> None:
                 },
             )
 
-            st.markdown("#### Configured categorical/filter variables")
-            role_rows = _categorical_role_summary_rows(scoped_bundle.data, scoped_bundle.config)
-            if role_rows:
-                role_table = pd.DataFrame(role_rows)
-                st.dataframe(
-                    role_table,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Role": st.column_config.TextColumn(width=170),
-                        "Column": st.column_config.TextColumn(width=190),
-                        "Unique values": st.column_config.TextColumn(width=140),
-                        "Values / range": st.column_config.TextColumn(width=285),
-                        "Details": st.column_config.TextColumn(width=530),
-                    },
-                )
-            else:
-                st.info("No categorical/filter variables have been configured for this model.")
-
-            st.markdown("#### Grade-variable inventory")
-            grade_rows = [
-                {
-                    "Column": spec.column,
-                    "Display name": spec.label,
-                    "Unit": spec.unit,
-                    "Decimals": spec.decimals,
-                    "Available in data": "Yes" if spec.column in scoped_bundle.data.columns else "No",
-                }
-                for spec in scoped_bundle.config.grade_specs
-            ]
-            if grade_rows:
-                # Keep this descriptive inventory fully left-aligned, including
-                # the Decimals column, by rendering all values as text.
-                grade_table = pd.DataFrame(grade_rows).astype(str)
-                st.dataframe(
-                    _left_aligned_table_style(grade_table),
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Column": st.column_config.TextColumn(width=210),
-                        "Display name": st.column_config.TextColumn(width=235),
-                        "Unit": st.column_config.TextColumn(width=180),
-                        "Decimals": st.column_config.TextColumn(width=190),
-                        "Available in data": st.column_config.TextColumn(width=250),
-                    },
-                )
-            else:
-                st.info("No grade variables were configured for this model.")
-
-    with st.expander("Additional Model Description/Checks", expanded=False):
-        _model_description_recommended_checks(scoped_bundles)
 
 
 # Function: render_quality
@@ -5560,40 +5707,53 @@ def render_quality() -> None:
 # Render single-model validation and resource-tabulation workflows.
 def render_evaluation() -> None:
     _apply_premium_tab_styles()
-    page_header("Model Evaluation", "Configure data controls and review the resource tabulation dashboard for one model.")
+    header_placeholder = st.empty()
     if not st.session_state.models:
+        with header_placeholder.container():
+            page_header("Model Evaluation", "Configure data controls and review the resource tabulation dashboard for one model.")
         _render_no_models_state("No model available for evaluation")
         return
 
-    model_name = st.selectbox("Model to evaluate", list(st.session_state.models), key="eval_model")
+    model_name = st.selectbox(
+        "Model to evaluate",
+        list(st.session_state.models),
+        key="eval_model",
+        format_func=lambda key: _configured_model_name(st.session_state.models[key], key),
+    )
     bundle = st.session_state.models[model_name]
-    _render_active_model_strip(model_name, bundle)
+    # Mandatory grade-validation rules: negative and zero grades are errors.
+    bundle.config.reject_negative_grades = True
+    bundle.config.require_positive_grades = True
+    display_model_name = _configured_model_name(bundle, model_name)
+    _render_active_model_strip(display_model_name, bundle)
     _render_master_year_filter_sidebar([bundle], f"eval_{_safe_key(model_name)}")
     _render_master_destination_filter_sidebar([bundle], f"eval_{_safe_key(model_name)}")
     _render_master_phase_filter_sidebar([bundle], f"eval_{_safe_key(model_name)}")
+
+    with header_placeholder.container():
+        page_header("Model Evaluation", "Configure data controls and review the resource tabulation dashboard for one model.")
+
     scoped_bundle = _scoped_bundle(bundle)
 
     filtered_data, sidebar_filters = _sidebar_evaluation_filters(scoped_bundle, f"eval_{_safe_key(model_name)}")
 
     tabs = st.tabs([
         "Variables & controls",
-        "Validation details",
         "Tabulation by Categ",
         "Tabulation by Destination",
     ])
 
     with tabs[0]:
         _render_variable_controls(bundle, model_name)
-
-    with tabs[1]:
+        st.divider()
         st.caption("Validation details are shown after the master BLK_MODEL, Year/Month, Phase and Destination / Ore Type scope. Sidebar analytical filters are intended for evaluation charts and tables.")
         _render_validation_details(scoped_bundle, model_name)
 
-    with tabs[2]:
-        _render_resource_dashboard(scoped_bundle, model_name, filtered_data, sidebar_filters)
+    with tabs[1]:
+        _render_resource_dashboard(scoped_bundle, display_model_name, filtered_data, sidebar_filters)
 
-    with tabs[3]:
-        _render_resource_by_destination(scoped_bundle, model_name, filtered_data, sidebar_filters)
+    with tabs[2]:
+        _render_resource_by_destination(scoped_bundle, display_model_name, filtered_data, sidebar_filters)
 
 
 FIVE_YEAR_ORE_DESTINATIONS = ["H1", "H2", "L1", "L2", "L3", "M1", "M2", "M3"]
@@ -5854,6 +6014,7 @@ def _render_five_year_ore_comparison(
         st.info("Select at least two models to activate the five-year Au/Ag content and difference tables.")
         return
 
+    display_names = _model_display_names(raw_bundles)
     reference_key = "five_year_ore_reference_model"
     if st.session_state.get(reference_key) not in selected_model_names:
         st.session_state[reference_key] = selected_model_names[0]
@@ -5864,6 +6025,7 @@ def _render_five_year_ore_comparison(
             "Reference model",
             selected_model_names,
             key=reference_key,
+            format_func=lambda key: display_names.get(key, key),
             help="Difference = comparison model minus reference model, reported in ounces.",
         )
 
@@ -5919,7 +6081,7 @@ def _render_five_year_ore_comparison(
 
     years = list(range(start_year, start_year + 5))
     st.info(
-        f"Planning window: **{years[0]}-{years[-1]}** | Reference: **{reference_model}** | "
+        f"Planning window: **{years[0]}-{years[-1]}** | Reference: **{display_names.get(reference_model, reference_model)}** | "
         f"Model source: **{source_scope}**"
     )
 
@@ -5935,7 +6097,7 @@ def _render_five_year_ore_comparison(
                 role_filters,
             )
             if matrix is None:
-                errors.append(f"{model_name} / {metal_label}: {error}")
+                errors.append(f"{display_names.get(model_name, model_name)} / {metal_label}: {error}")
             else:
                 tables[metal_label][model_name] = matrix
 
@@ -5954,11 +6116,11 @@ def _render_five_year_ore_comparison(
 
             available_models = [name for name in selected_model_names if name in metal_tables]
             st.markdown("#### Contents by model")
-            content_tabs = st.tabs(available_models)
+            content_tabs = st.tabs([display_names.get(name, name) for name in available_models])
             for content_tab, model_name in zip(content_tabs, available_models, strict=True):
                 with content_tab:
                     _render_ore_ounce_matrix(
-                        f"{metal_label} content by ore destination — {model_name}",
+                        f"{metal_label} content by ore destination — {display_names.get(model_name, model_name)}",
                         metal_tables[model_name],
                     )
 
@@ -5970,19 +6132,22 @@ def _render_five_year_ore_comparison(
                 continue
 
             comparison_models = [name for name in available_models if name != reference_model]
-            st.markdown(f"#### Differences versus {reference_model}")
+            st.markdown(f"#### Differences versus {display_names.get(reference_model, reference_model)}")
             st.caption("Absolute difference in ounces: comparison model − reference model.")
             if not comparison_models:
                 st.info("No additional model with a valid table is available for this difference calculation.")
                 continue
 
-            difference_tabs = st.tabs([f"{name} − {reference_model}" for name in comparison_models])
+            difference_tabs = st.tabs([
+                f"{display_names.get(name, name)} − {display_names.get(reference_model, reference_model)}"
+                for name in comparison_models
+            ])
             reference_table = metal_tables[reference_model]
             for difference_tab, model_name in zip(difference_tabs, comparison_models, strict=True):
                 with difference_tab:
                     difference = metal_tables[model_name].subtract(reference_table, fill_value=0.0)
                     _render_ore_ounce_matrix(
-                        f"Ore difference ({metal_label} oz): {model_name} − {reference_model}",
+                        f"Ore difference ({metal_label} oz): {display_names.get(model_name, model_name)} − {display_names.get(reference_model, reference_model)}",
                         difference,
                     )
 
@@ -5990,8 +6155,10 @@ def _render_five_year_ore_comparison(
 # Render Model Comparison after enforcing the mandatory global-volume gate.
 def render_comparison() -> None:
     _apply_premium_tab_styles()
-    page_header("Model Comparison", "Compare two or more configured models after the mandatory global-volume check.")
+    header_placeholder = st.empty()
     if len(st.session_state.models) < 2:
+        with header_placeholder.container():
+            page_header("Model Comparison", "Compare two or more configured models after the mandatory global-volume check.")
         st.info(
             "The five-year Au/Ag content and difference tables are available in Model Comparison once at least "
             "two models have been configured."
@@ -6008,13 +6175,20 @@ def render_comparison() -> None:
         if cleaned_selection != st.session_state[selection_key]:
             st.session_state[selection_key] = cleaned_selection
 
+    workspace_display_names = {
+        key: _configured_model_name(st.session_state.models[key], key)
+        for key in model_names
+    }
     selected = st.multiselect(
         "Models to compare",
         model_names,
         key=selection_key,
+        format_func=lambda key: workspace_display_names.get(key, key),
         help="Select two to five configured models. All difference tables use the reference model chosen inside each comparison tab.",
     )
     if len(selected) < 2:
+        with header_placeholder.container():
+            page_header("Model Comparison", "Compare two or more configured models after the mandatory global-volume check.")
         st.warning(
             "Select at least two models. The five-year Au/Ag comparison, destination comparison and volume check "
             "remain disabled until two or more models are selected."
@@ -6026,6 +6200,10 @@ def render_comparison() -> None:
     _render_master_year_filter_sidebar(selected_raw_bundles, "comparison")
     _render_master_destination_filter_sidebar(selected_raw_bundles, "comparison")
     _render_master_phase_filter_sidebar(selected_raw_bundles, "comparison")
+
+    with header_placeholder.container():
+        page_header("Model Comparison", "Compare two or more configured models after the mandatory global-volume check.")
+
     bundles = {name: _scoped_bundle(st.session_state.models[name]) for name in selected}
 
     tolerance = st.number_input(
@@ -6056,6 +6234,11 @@ def render_comparison() -> None:
                 scoped = bundles[name]
                 _scope_caption(original.data, scoped.data, scoped.config)
         volume_display_table = _scale_volume_columns_for_display(volume_table, bundles)
+        comparison_display_names = _model_display_names(bundles)
+        if "Model" in volume_display_table.columns:
+            volume_display_table["Model"] = volume_display_table["Model"].map(
+                lambda key: comparison_display_names.get(str(key), str(key))
+            )
         st.dataframe(
             _left_aligned_table_style(
                 volume_display_table,
@@ -6073,6 +6256,13 @@ def render_comparison() -> None:
             )
         )
         matrix = pairwise_volume_matrix(bundles)
+        if "Reference model" in matrix.columns:
+            matrix["Reference model"] = matrix["Reference model"].map(
+                lambda key: comparison_display_names.get(str(key), str(key))
+            )
+        matrix = matrix.rename(columns={
+            key: label for key, label in comparison_display_names.items() if key in matrix.columns
+        })
         st.caption("Pairwise variance in %, using each row as reference model.")
         st.dataframe(
             _left_aligned_table_style(
@@ -7704,8 +7894,10 @@ def _report_pdf_bytes(
 # Function: render_reports
 # Render automatic report selection, preview and Excel/PDF downloads.
 def render_reports() -> None:
-    page_header("Report Builder", "Automatically export evaluation/comparison tables with footnotes and all available charts from the active session.")
+    header_placeholder = st.empty()
     if not st.session_state.models:
+        with header_placeholder.container():
+            page_header("Report Builder", "Automatically export evaluation/comparison tables with footnotes and all available charts from the active session.")
         _render_no_models_state("No models available for reporting")
         return
 
@@ -7713,6 +7905,9 @@ def render_reports() -> None:
     _render_master_year_filter_sidebar(raw_bundles, "reports")
     _render_master_destination_filter_sidebar(raw_bundles, "reports")
     _render_master_phase_filter_sidebar(raw_bundles, "reports")
+
+    with header_placeholder.container():
+        page_header("Report Builder", "Automatically export evaluation/comparison tables with footnotes and all available charts from the active session.")
 
     scoped_bundles = {name: _scoped_bundle(bundle) for name, bundle in st.session_state.models.items()}
     model_names = list(scoped_bundles.keys())
