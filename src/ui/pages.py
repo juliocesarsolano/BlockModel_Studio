@@ -132,7 +132,7 @@ from src.core.reports import scenes_to_excel, scenes_to_pdf
 from src.core.validation import validate_model
 
 # Shared UI utilities provide colors, formatting, navigation and master scope.
-from src.ui.common import CATEGORY_COLORS, MASTER_BLK_MODEL_OPTIONS, MODEL_COLORS, format_table, move_to, selected_master_blk_model_values
+from src.ui.common import CATEGORY_COLORS, MASTER_BLK_MODEL_OPTIONS, MODEL_COLORS, format_table, selected_master_blk_model_values
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1105,6 +1105,15 @@ METAL_AT_RISK_COLORS = {
     "Measured": "#A39161",
     "Indicated (At Risk)": "#BFBFBF",
 }
+
+# Sampling KPI palette mirrors the reference chart supplied for the Model
+# Evaluation sampling-confidence view.
+SAMPLING_KPI_COLORS = {
+    "Grade Control": "#44546A",
+    "Measured": "#A39161",   # RGB(163, 145, 97) - corporate gold
+    "Indicated": "#03547C",  # RGB(3, 84, 124) - corporate blue
+}
+SAMPLING_KPI_AU_COLOR = "#A6C63B"
 
 DESTINATION_COLORS = {
     "H1": "#B30000",
@@ -2678,13 +2687,69 @@ def _contained_ounces_for_label(data: pd.DataFrame, config: ModelConfig, label: 
     return float(value) if unit == "oz" else None
 
 
+def _contained_tonnes_for_label(data: pd.DataFrame, config: ModelConfig, label: str) -> float | None:
+    """Return contained metric tonnes for percentage-grade variables."""
+    spec = _spec_by_canonical_label(config, label)
+    if not spec or spec.column not in data.columns or data.empty:
+        return None
+    metal = contained_metal(data[spec.column], data[config.mass_column], _effective_grade_unit(spec))
+    if not metal:
+        return None
+    value, unit = metal
+    return float(value) if unit == "t" else None
+
+
+def _vertical_category_column(config: ModelConfig, data: pd.DataFrame) -> str | None:
+    """Prefer Categ_gc for vertical-table ore-category reconciliation."""
+    for spec in config.category_specs:
+        if (
+            str(spec.role).casefold() == "category"
+            and spec.column in data.columns
+            and _is_grade_control_category_column(spec.column)
+        ):
+            return spec.column
+
+    configured = config.column_for_role("Category")
+    if configured and configured in data.columns:
+        return configured
+
+    for column in data.columns:
+        if _is_grade_control_category_column(column):
+            return column
+    return None
+
+
+def _exact_rounded_percentages(
+    tonnes_by_category: dict[str, float],
+    total_tonnes: float,
+    decimals: int = 2,
+) -> dict[str, float]:
+    """Round displayed category percentages while preserving an exact 100% total."""
+    if total_tonnes <= 0 or not tonnes_by_category:
+        return {category: 0.0 for category in tonnes_by_category}
+
+    raw = {
+        category: (max(float(tonnes), 0.0) / float(total_tonnes)) * 100.0
+        for category, tonnes in tonnes_by_category.items()
+    }
+    rounded = {category: round(value, decimals) for category, value in raw.items()}
+
+    target = round(100.0, decimals)
+    residual = round(target - sum(rounded.values()), decimals)
+    if abs(residual) >= (0.5 * 10 ** (-decimals)):
+        largest = max(tonnes_by_category, key=lambda key: tonnes_by_category[key])
+        rounded[largest] = round(rounded[largest] + residual, decimals)
+
+    return rounded
+
+
 
 # =============================================================================
 # VERTICAL DESTINATION TABULATION AND PHASE CHARTS
 # =============================================================================
 # Function: _destination_summary_table
 # Build the vertical destination table for ore, waste, strip ratio, weighted
-# grades and contained Au/Ag metal.
+# grades, contained metals and ore-category reconciliation.
 def _destination_summary_table(
     data: pd.DataFrame,
     config: ModelConfig,
@@ -2700,7 +2765,7 @@ def _destination_summary_table(
     configured_name = str(getattr(config, "model_name", "") or "").strip()
     value_col = configured_report_title or workspace_name or configured_name or "Model"
     if not dest_col or dest_col not in data.columns:
-        return pd.DataFrame(columns=["Model", "Unit", value_col, "__row_type__"])
+        return pd.DataFrame(columns=["Model", "Unit", value_col, "__row_type__", "__raw_value__"])
 
     work = data.copy()
     work["__dest_code__"] = work[dest_col].map(_normalize_destination_code)
@@ -2718,26 +2783,79 @@ def _destination_summary_table(
 
     rows: list[dict[str, Any]] = []
 
-    def add(label: str, unit: str, value: str, row_type: str = "normal") -> None:
-        rows.append({"Model": label, "Unit": unit, value_col: value, "__row_type__": row_type})
+    def add(
+        label: str,
+        unit: str,
+        value: str,
+        row_type: str = "normal",
+        raw_value: float | int | None = None,
+    ) -> None:
+        rows.append(
+            {
+                "Model": label,
+                "Unit": unit,
+                value_col: value,
+                "__row_type__": row_type,
+                "__raw_value__": raw_value,
+            }
+        )
+
+    def raw_tonnes_by_code(code: str) -> float:
+        subset = work[work["__dest_code__"].eq(code)]
+        return _tonnes_for_frame(subset, config)
 
     def tonnes_by_code(code: str) -> float:
-        subset = work[work["__dest_code__"].eq(code)]
-        return _display_tonnage_value(_tonnes_for_frame(subset, config), config)
+        return _display_tonnage_value(raw_tonnes_by_code(code), config)
 
-    add("Ore tonnes", config.tonnage_unit, _format_destination_value(_display_tonnage_value(ore_tonnes, config), tonnage_decimals), "section")
+    add(
+        "Ore tonnes",
+        config.tonnage_unit,
+        _format_destination_value(_display_tonnage_value(ore_tonnes, config), tonnage_decimals),
+        "section",
+        ore_tonnes,
+    )
     for code in PRIMARY_ORE_DESTINATION_CODES:
-        add(code, config.tonnage_unit, _format_destination_value(tonnes_by_code(code), tonnage_decimals))
+        raw_tonnes = raw_tonnes_by_code(code)
+        add(
+            code,
+            config.tonnage_unit,
+            _format_destination_value(_display_tonnage_value(raw_tonnes, config), tonnage_decimals),
+            raw_value=raw_tonnes,
+        )
     for code in OPTIONAL_ORE_DESTINATION_CODES:
         if work["__dest_code__"].eq(code).any():
-            add(code, config.tonnage_unit, _format_destination_value(tonnes_by_code(code), tonnage_decimals))
+            raw_tonnes = raw_tonnes_by_code(code)
+            add(
+                code,
+                config.tonnage_unit,
+                _format_destination_value(_display_tonnage_value(raw_tonnes, config), tonnage_decimals),
+                raw_value=raw_tonnes,
+            )
 
-    add("Waste tonnes", config.tonnage_unit, _format_destination_value(_display_tonnage_value(waste_tonnes, config), tonnage_decimals), "section")
+    add(
+        "Waste tonnes",
+        config.tonnage_unit,
+        _format_destination_value(_display_tonnage_value(waste_tonnes, config), tonnage_decimals),
+        "section",
+        waste_tonnes,
+    )
     for code in WASTE_DESTINATION_CODES:
-        add(code, config.tonnage_unit, _format_destination_value(tonnes_by_code(code), tonnage_decimals))
+        raw_tonnes = raw_tonnes_by_code(code)
+        add(
+            code,
+            config.tonnage_unit,
+            _format_destination_value(_display_tonnage_value(raw_tonnes, config), tonnage_decimals),
+            raw_value=raw_tonnes,
+        )
 
-    add("Total tonnes", config.tonnage_unit, _format_destination_value(_display_tonnage_value(total_tonnes, config), tonnage_decimals), "section")
-    add("Strip Ratio", "t/t", _format_destination_value(strip_ratio, 2), "separator")
+    add(
+        "Total tonnes",
+        config.tonnage_unit,
+        _format_destination_value(_display_tonnage_value(total_tonnes, config), tonnage_decimals),
+        "section",
+        total_tonnes,
+    )
+    add("Strip Ratio", "t/t", _format_destination_value(strip_ratio, 2), "separator", strip_ratio)
 
     grade_specs = [
         ("Au Grade", "Au"),
@@ -2750,20 +2868,125 @@ def _destination_summary_table(
     ]
     for row_label, canonical in grade_specs:
         unit, value = _weighted_grade_for_label(ore_data, config, canonical)
-        add(row_label, unit or "-", _format_grade_value(value, int(config.grade_decimals)))
+        add(
+            row_label,
+            unit or "-",
+            _format_grade_value(value, int(config.grade_decimals)),
+            raw_value=value,
+        )
 
-    for metal_label in ["Au", "Ag"]:
-        total_oz = _contained_ounces_for_label(ore_data, config, metal_label)
-        add(f"{metal_label} Metal", "Moz", _format_destination_value((total_oz or 0.0) / 1_000_000, 3), "section")
-        for code in PRIMARY_ORE_DESTINATION_CODES:
+    # Au remains the only contained-metal section disaggregated by destination.
+    au_total_oz = _contained_ounces_for_label(ore_data, config, "Au")
+    add(
+        "Au Metal",
+        "Moz",
+        _format_destination_value((au_total_oz or 0.0) / 1_000_000, 3),
+        "section",
+        au_total_oz,
+    )
+    for code in PRIMARY_ORE_DESTINATION_CODES:
+        subset = work[work["__dest_code__"].eq(code)]
+        ounces = _contained_ounces_for_label(subset, config, "Au")
+        add(
+            code,
+            "Moz",
+            _format_destination_value((ounces or 0.0) / 1_000_000, 3),
+            raw_value=ounces,
+        )
+    for code in OPTIONAL_ORE_DESTINATION_CODES:
+        if work["__dest_code__"].eq(code).any():
             subset = work[work["__dest_code__"].eq(code)]
-            ounces = _contained_ounces_for_label(subset, config, metal_label)
-            add(code, "Moz", _format_destination_value((ounces or 0.0) / 1_000_000, 3))
-        for code in OPTIONAL_ORE_DESTINATION_CODES:
-            if work["__dest_code__"].eq(code).any():
-                subset = work[work["__dest_code__"].eq(code)]
-                ounces = _contained_ounces_for_label(subset, config, metal_label)
-                add(code, "Moz", _format_destination_value((ounces or 0.0) / 1_000_000, 3))
+            ounces = _contained_ounces_for_label(subset, config, "Au")
+            add(
+                code,
+                "Moz",
+                _format_destination_value((ounces or 0.0) / 1_000_000, 3),
+                raw_value=ounces,
+            )
+
+    # Ag is reported only as a total. Cu, Stot, S2, Ctot and OC are contained
+    # metric tonnes calculated from the ore records.
+    ag_total_oz = _contained_ounces_for_label(ore_data, config, "Ag")
+    add(
+        "Ag Metal",
+        "Moz",
+        _format_destination_value((ag_total_oz or 0.0) / 1_000_000, 3),
+        "section",
+        ag_total_oz,
+    )
+
+    contained_tonne_rows = [
+        ("Cu Metal", "Cu"),
+        ("Stot", "Stot"),
+        ("S2", "S2"),
+        ("Ctot", "Ctot"),
+        ("OC", "OC"),
+    ]
+    for row_label, canonical in contained_tonne_rows:
+        contained_tonnes = _contained_tonnes_for_label(ore_data, config, canonical)
+        add(
+            row_label,
+            "t",
+            _format_destination_value(contained_tonnes, 0) if contained_tonnes is not None else "-",
+            "section",
+            contained_tonnes,
+        )
+
+    # Ore category reconciliation. Prefer Categ_gc when it is configured.
+    # These percentages are based on exactly the same ore_data used by the
+    # Ore tonnes row, so the category tonnage partition closes to Ore tonnes.
+    category_col = _vertical_category_column(config, ore_data)
+    if category_col and category_col in ore_data.columns:
+        category_names = ore_data[category_col].map(_display_resource_category)
+        category_bucket = category_names.where(
+            category_names.isin(["Grade Control", "Measured", "Indicated", "Inferred", "Inventory"]),
+            "Unclassified / Other",
+        )
+
+        category_order = ["Grade Control", "Measured", "Indicated", "Inferred", "Inventory"]
+        tonnes_by_category: dict[str, float] = {}
+        for category_name in category_order:
+            mask = category_bucket.eq(category_name)
+            tonnes_by_category[category_name] = _tonnes_for_frame(ore_data[mask], config)
+
+        other_mask = category_bucket.eq("Unclassified / Other")
+        other_tonnes = _tonnes_for_frame(ore_data[other_mask], config)
+
+        classified_total = sum(tonnes_by_category.values()) + other_tonnes
+        closure_residual = ore_tonnes - classified_total
+        if abs(closure_residual) > max(1e-6, abs(ore_tonnes) * 1e-12):
+            other_tonnes += closure_residual
+
+        if other_tonnes > max(1e-6, abs(ore_tonnes) * 1e-12):
+            tonnes_by_category["Unclassified / Other"] = other_tonnes
+
+        percentages = _exact_rounded_percentages(tonnes_by_category, ore_tonnes, decimals=2)
+
+        add(
+            "ResCat Dist. - Ore Basis",
+            config.tonnage_unit,
+            _format_destination_value(_display_tonnage_value(ore_tonnes, config), tonnage_decimals),
+            "section",
+            ore_tonnes,
+        )
+        for category_name, percentage in percentages.items():
+            category_tonnes = tonnes_by_category.get(category_name, 0.0)
+            raw_percentage = (category_tonnes / ore_tonnes * 100.0) if ore_tonnes > 0 else 0.0
+            add(
+                category_name,
+                "%",
+                _format_destination_value(percentage, 2),
+                raw_value=raw_percentage,
+            )
+
+        percentage_total = sum(percentages.values()) if ore_tonnes > 0 else 0.0
+        add(
+            "Category total",
+            "%",
+            _format_destination_value(percentage_total, 2),
+            "separator",
+            100.0 if ore_tonnes > 0 else 0.0,
+        )
 
     return pd.DataFrame(rows)
 
@@ -2778,7 +3001,7 @@ def _render_destination_summary_table(table: pd.DataFrame, *, compact: bool = Fa
         return
 
     row_types = table["__row_type__"].tolist() if "__row_type__" in table.columns else ["normal"] * len(table)
-    visible = table.drop(columns=["__row_type__"], errors="ignore")
+    visible = table.drop(columns=["__row_type__", "__raw_value__"], errors="ignore")
 
     def row_style(row: pd.Series) -> list[str]:
         row_type = row_types[row.name] if row.name < len(row_types) else "normal"
@@ -2984,7 +3207,7 @@ def _render_resource_by_destination(
         f"{display_model_name} - resource tabulation by destination",
         "Resource by destination",
         [display_model_name],
-        table.drop(columns=["__row_type__"], errors="ignore"),
+        table.drop(columns=["__row_type__", "__raw_value__"], errors="ignore"),
         filters,
     )
 
@@ -3036,13 +3259,19 @@ def _numeric_from_destination_value(value: Any) -> float | None:
 # Function: _format_relative_difference_pct
 # Format values for relative difference pct display.
 def _format_relative_difference_pct(value: Any, reference_value: Any) -> str:
-    value_number = _numeric_from_destination_value(value)
-    reference_number = _numeric_from_destination_value(reference_value)
-    if value_number is None or reference_number is None:
+    """Format relative difference from unrounded raw numeric values."""
+    try:
+        value_number = float(value)
+        reference_number = float(reference_value)
+    except (TypeError, ValueError):
+        return "-"
+
+    if pd.isna(value_number) or pd.isna(reference_number):
         return "-"
     if abs(reference_number) < 1e-12:
-        return "0%" if abs(value_number) < 1e-12 else "-"
-    return f"{((value_number - reference_number) / reference_number) * 100:,.0f}%"
+        return "0.00%" if abs(value_number) < 1e-12 else "-"
+    difference_pct = ((value_number - reference_number) / reference_number) * 100.0
+    return f"{difference_pct:,.2f}%"
 
 
 # Function: _add_relative_difference_columns
@@ -3061,8 +3290,11 @@ def _add_relative_difference_columns(rows: list[dict[str, Any]], model_names: li
         if model_name == reference_model_name:
             continue
         diff_col = f"{model_name} Δ%"
+        raw_model_col = f"__raw__{model_name}"
+        raw_reference_col = f"__raw__{reference_model_name}"
         table[diff_col] = table.apply(
-            lambda row, model=model_name: _format_relative_difference_pct(row.get(model), row.get(reference_model_name)),
+            lambda row, model_col=raw_model_col, reference_col=raw_reference_col:
+                _format_relative_difference_pct(row.get(model_col), row.get(reference_col)),
             axis=1,
         )
         ordered_columns.append(diff_col)
@@ -3085,6 +3317,7 @@ def _destination_comparison_table(bundles: dict[str, ModelBundle], reference_mod
     """
     row_meta: dict[str, dict[str, Any]] = {}
     model_values: dict[str, dict[str, Any]] = {}
+    model_raw_values: dict[str, dict[str, float | int | None]] = {}
     report_titles = {
         key: _destination_report_title(bundle, key)
         for key, bundle in bundles.items()
@@ -3095,19 +3328,22 @@ def _destination_comparison_table(bundles: dict[str, ModelBundle], reference_mod
         table = _destination_summary_table(bundle.data, bundle.config, report_title)
         if table.empty:
             model_values[model_key] = {}
+            model_raw_values[model_key] = {}
             continue
 
         keyed = _destination_table_with_row_keys(table)
         value_columns = [
             column for column in keyed.columns
-            if column not in {"Model", "Unit", "__row_type__", "__row_key__"}
+            if column not in {"Model", "Unit", "__row_type__", "__row_key__", "__raw_value__"}
         ]
         if not value_columns:
             model_values[model_key] = {}
+            model_raw_values[model_key] = {}
             continue
         value_col = value_columns[0]
 
         values: dict[str, Any] = {}
+        raw_values: dict[str, float | int | None] = {}
         for _, row in keyed.iterrows():
             row_key = str(row["__row_key__"])
             if row_key not in row_meta:
@@ -3117,41 +3353,19 @@ def _destination_comparison_table(bundles: dict[str, ModelBundle], reference_mod
                     "__row_type__": row.get("__row_type__", "normal"),
                 }
             values[row_key] = row.get(value_col, "-")
+            raw_value = row.get("__raw_value__")
+            raw_values[row_key] = None if pd.isna(raw_value) else raw_value
         model_values[model_key] = values
+        model_raw_values[model_key] = raw_values
 
     model_keys = list(bundles.keys())
     rows: list[dict[str, Any]] = []
     for row_key, meta in row_meta.items():
         row = dict(meta)
         for model_key in model_keys:
-            row[report_titles[model_key]] = model_values.get(model_key, {}).get(row_key, "-")
-        rows.append(row)
-
-    category_rows = [
-        ("Grade Control tonnes", "grade_control"),
-        ("Measured tonnes", "measured"),
-        ("Indicated tonnes", "indicated"),
-        ("Inferred tonnes", "inferred"),
-    ]
-    default_unit = next(iter(bundles.values())).config.tonnage_unit if bundles else "Mt"
-
-    for row_index, (row_label, category_key) in enumerate(category_rows):
-        row = {
-            "Model": row_label,
-            "Unit": default_unit,
-            "__row_type__": "separator" if row_index == 0 else "normal",
-        }
-        for model_key, bundle in bundles.items():
             report_title = report_titles[model_key]
-            category_col = bundle.config.column_for_role("Category")
-            if not category_col or category_col not in bundle.data.columns:
-                row[report_title] = "-"
-                continue
-            mask = _category_mask(bundle.data, category_col, category_key)
-            tonnes = _tonnes_for_frame(bundle.data[mask], bundle.config)
-            display_tonnes = _display_tonnage_value(tonnes, bundle.config)
-            decimals = max(2, int(bundle.config.tonnage_decimals))
-            row[report_title] = _format_destination_value(display_tonnes, decimals)
+            row[report_title] = model_values.get(model_key, {}).get(row_key, "-")
+            row[f"__raw__{report_title}"] = model_raw_values.get(model_key, {}).get(row_key)
         rows.append(row)
 
     display_model_names = [report_titles[key] for key in model_keys]
@@ -3833,15 +4047,19 @@ def _render_variable_controls(bundle: ModelBundle, model_name: str) -> None:
         validation_cols = st.columns(4)
         reject_negative_grades = validation_cols[0].checkbox(
             "Negative grades are errors",
-            value=True,
-            disabled=True,
-            help="Mandatory validation rule: grade values below zero are errors.",
+            value=bool(config.reject_negative_grades),
+            help=(
+                "Enabled by default. When selected, grade values below zero are reported as errors. "
+                "Clear this option only when you intentionally want negative grades treated as warnings."
+            ),
         )
         require_positive_grades = validation_cols[1].checkbox(
             "Require grades > 0 (zero = error)",
-            value=True,
-            disabled=True,
-            help="Mandatory validation rule: grade values must be strictly greater than zero; zero is an error.",
+            value=bool(config.require_positive_grades),
+            help=(
+                "Enabled by default. When selected, zero and negative grade values are reported as errors. "
+                "Clear this option when zero grades are acceptable for the model being evaluated."
+            ),
         )
         year_min = int(validation_cols[2].number_input("Minimum valid year", value=int(config.year_min)))
         year_max = int(validation_cols[3].number_input("Maximum valid year", value=int(config.year_max)))
@@ -4489,6 +4707,14 @@ def _setup_step(step: int, title: str, description: str) -> None:
 # =============================================================================
 # SHARED PAGE STATES AND MODEL SETUP WORKFLOW
 # =============================================================================
+# Function: _set_navigation_page
+# Update the main navigation from a widget callback. Streamlit executes button
+# callbacks before the page rerun, so the nav_page widget has not yet been
+# instantiated in that rerun and its session-state value can be changed safely.
+def _set_navigation_page(page_name: str) -> None:
+    st.session_state["nav_page"] = page_name
+
+
 # Function: _render_no_models_state
 # Render the no models state interface section.
 def _render_no_models_state(message: str, minimum: int = 1) -> None:
@@ -4506,8 +4732,13 @@ def _render_no_models_state(message: str, minimum: int = 1) -> None:
         """,
         unsafe_allow_html=True,
     )
-    if st.button("Go to Model Setup", type="primary", key=f"empty_setup_{_safe_key(message)}"):
-        move_to("Model Setup")
+    st.button(
+        "Go to Model Setup",
+        type="primary",
+        key=f"empty_setup_{_safe_key(message)}",
+        on_click=_set_navigation_page,
+        args=("Model Setup",),
+    )
 
 
 # Function: _render_active_model_strip
@@ -5686,6 +5917,406 @@ def render_quality() -> None:
     render_model_description()
 
 
+
+# =============================================================================
+# SAMPLING KPI – CATEGORY CONFIDENCE + GOLD OUNCES
+# =============================================================================
+def _sampling_kpi_group_column(config: ModelConfig, data: pd.DataFrame, role: str) -> str | None:
+    """Resolve Year, Month or Bench columns used by the Sampling KPI X axis."""
+    if role == "Year":
+        return _year_column(config, data)
+    if role == "Month":
+        return _month_column(config, data)
+    if role == "Bench":
+        column = config.column_for_role("Bench")
+        return column if column and column in data.columns else None
+    return None
+
+
+def _sampling_month_sort_key(value: Any) -> tuple[Any, ...]:
+    """Chronologically sort common month labels, including 26_Jul and Jul-26."""
+    parsed = _parse_month_year(value)
+    if parsed:
+        year, month = parsed
+        return (0, int(year), int(month), "")
+
+    if pd.isna(value):
+        return (9, 9999, 99, "")
+
+    text = str(value).strip()
+    compact = re.sub(r"[\s._/\-]+", "", text.casefold())
+
+    # Support year-first labels such as 26_Jul, 26Jul, 2026_Jul and 2026Jul.
+    reverse_named = re.fullmatch(r"(\d{2}|\d{4})([a-záéíóúüñ]+)", compact)
+    if reverse_named:
+        year = _normalize_two_digit_year(int(reverse_named.group(1)))
+        month = _month_name_number(reverse_named.group(2))
+        if month:
+            return (0, year, month, text.casefold())
+
+    month_number = _month_name_number(text)
+    if month_number:
+        return (1, 0, month_number, text.casefold())
+
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.notna(numeric) and 1 <= float(numeric) <= 12:
+        return (1, 0, int(numeric), text.casefold())
+
+    return (8, 9999, 99, text.casefold())
+
+
+def _sampling_kpi_sort_key(value: Any, role: str) -> tuple[Any, ...]:
+    if role == "Year":
+        numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        if pd.notna(numeric):
+            return (0, int(numeric))
+        return (1, str(value).casefold())
+    if role == "Month":
+        return _sampling_month_sort_key(value)
+    if role == "Bench":
+        numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        if pd.notna(numeric):
+            # Mining benches are conventionally displayed from high to low.
+            return (0, -float(numeric))
+        return (1, str(value).casefold())
+    return (2, str(value).casefold())
+
+
+def _sampling_kpi_display_value(value: Any, role: str) -> Any:
+    if pd.isna(value):
+        return "N/A"
+    if role in {"Year", "Bench"}:
+        numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        if pd.notna(numeric):
+            return int(numeric) if float(numeric).is_integer() else float(numeric)
+    return str(value).strip()
+
+
+def _sampling_kpi_available_roles(config: ModelConfig, data: pd.DataFrame) -> list[str]:
+    roles: list[str] = []
+    for role in ["Year", "Month", "Bench"]:
+        if _sampling_kpi_group_column(config, data, role):
+            roles.append(role)
+    return roles
+
+
+def _sampling_kpi_chart(
+    data: pd.DataFrame,
+    config: ModelConfig,
+    model_label: str,
+    key_prefix: str,
+) -> None:
+    """Render stacked category percentages with contained Au ounces on Y2."""
+    st.subheader("Sampling KPI")
+    st.caption(
+        "Bars show the Grade Control / Measured / Indicated distribution for the current Model Evaluation "
+        "scope. Gold ounces use the same records and are plotted on the secondary vertical axis."
+    )
+
+    if data.empty:
+        st.info("No records are available for the active filters.")
+        return
+
+    category_col = config.column_for_role("Category")
+    if not category_col or category_col not in data.columns:
+        st.info("Configure a Category variable (preferably Categ_gc) to activate the Sampling KPI.")
+        return
+
+    available_roles = _sampling_kpi_available_roles(config, data)
+    if not available_roles:
+        st.info("Configure at least one of Year, Month or Bench to activate the Sampling KPI X axis.")
+        return
+
+    au_spec = _spec_by_canonical_label(config, "Au")
+    if not au_spec or au_spec.column not in data.columns:
+        st.info("Configure an Au grade variable to plot Gold Ounces on the secondary axis.")
+        return
+
+    # --------------------------------------------------------------
+    # Chart configuration controls
+    # --------------------------------------------------------------
+    grouping_cols = st.columns([1.0, 1.0])
+    default_primary = "Month" if "Month" in available_roles else ("Year" if "Year" in available_roles else available_roles[0])
+    primary_role = grouping_cols[0].selectbox(
+        "Primary X grouping",
+        available_roles,
+        index=available_roles.index(default_primary),
+        key=f"{key_prefix}_sampling_primary_role",
+        help="Choose Year, Month or Bench as the main horizontal grouping.",
+    )
+
+    secondary_options = ["None"] + [role for role in available_roles if role != primary_role]
+    current_secondary = st.session_state.get(f"{key_prefix}_sampling_secondary_role", "None")
+    if current_secondary not in secondary_options:
+        st.session_state[f"{key_prefix}_sampling_secondary_role"] = "None"
+    secondary_role = grouping_cols[1].selectbox(
+        "X subcategory",
+        secondary_options,
+        key=f"{key_prefix}_sampling_secondary_role",
+        help="Optional second X-axis level. Examples: Year → Month or Month → Bench.",
+    )
+
+    default_title = f"Sampling KPI - {str(config.report_title or model_label).strip()}"
+    title_value = st.text_input(
+        "Chart title",
+        value=default_title,
+        key=f"{key_prefix}_sampling_title",
+    )
+
+    axis_cols = st.columns(3)
+    default_x_title = primary_role if secondary_role == "None" else f"{primary_role} / {secondary_role}"
+    x_title = axis_cols[0].text_input(
+        "X-axis title",
+        value=default_x_title,
+        key=f"{key_prefix}_sampling_x_title",
+    )
+    y_title = axis_cols[1].text_input(
+        "Primary Y-axis title",
+        value="Volumetric Sampling KPI (%)",
+        key=f"{key_prefix}_sampling_y_title",
+    )
+    y2_title = axis_cols[2].text_input(
+        "Secondary Y-axis title",
+        value="Gold Ounces",
+        key=f"{key_prefix}_sampling_y2_title",
+    )
+
+    primary_col = _sampling_kpi_group_column(config, data, primary_role)
+    secondary_col = (
+        _sampling_kpi_group_column(config, data, secondary_role)
+        if secondary_role != "None"
+        else None
+    )
+    group_cols = [primary_col] + ([secondary_col] if secondary_col else [])
+    group_cols = [column for column in group_cols if column]
+
+    if not group_cols:
+        st.info("The selected X-axis grouping is not available in this model.")
+        return
+
+    # --------------------------------------------------------------
+    # Prepare confidence categories.
+    # --------------------------------------------------------------
+    work = data.copy()
+    work["__sampling_category__"] = work[category_col].map(_display_resource_category)
+    allowed_categories = ["Grade Control", "Measured", "Indicated"]
+    work = work[work["__sampling_category__"].isin(allowed_categories)].copy()
+
+    if work.empty:
+        st.info("No Grade Control, Measured or Indicated records are available for the active filters.")
+        return
+
+    # Volumetric KPI by default. Fall back to tonnage only when a usable
+    # volume field does not exist.
+    basis_label = "Volume"
+    basis_col = "__sampling_basis__"
+    if config.volume_column and config.volume_column in work.columns:
+        work[basis_col] = pd.to_numeric(work[config.volume_column], errors="coerce").fillna(0.0).clip(lower=0)
+    else:
+        basis_label = "Tonnage"
+        if config.mass_column not in work.columns:
+            st.info("Neither a configured Volume nor Tonnage column is available for the Sampling KPI.")
+            return
+        work[basis_col] = pd.to_numeric(work[config.mass_column], errors="coerce").fillna(0.0).clip(lower=0)
+        st.warning("No configured Volume column was found. Sampling percentages are using tonnage as the fallback basis.")
+
+    # Remove records with missing grouping values so categories and Au line use
+    # exactly the same X-axis domain.
+    work = work.dropna(subset=group_cols)
+    if work.empty:
+        st.info("No records remain after applying the selected X-axis grouping.")
+        return
+
+    # --------------------------------------------------------------
+    # Aggregate percent bars.
+    # --------------------------------------------------------------
+    bar_table = (
+        work.groupby(group_cols + ["__sampling_category__"], dropna=False, observed=True)[basis_col]
+        .sum()
+        .reset_index()
+    )
+    totals = (
+        bar_table.groupby(group_cols, dropna=False, observed=True)[basis_col]
+        .sum()
+        .rename("__sampling_total__")
+        .reset_index()
+    )
+    bar_table = bar_table.merge(totals, on=group_cols, how="left")
+    bar_table["Sampling KPI (%)"] = (
+        100.0
+        * bar_table[basis_col]
+        / bar_table["__sampling_total__"].where(bar_table["__sampling_total__"].gt(0))
+    ).fillna(0.0)
+
+    # --------------------------------------------------------------
+    # Aggregate Au ounces using the application's contained-metal rule.
+    # --------------------------------------------------------------
+    au_rows: list[dict[str, Any]] = []
+    au_unit = _effective_grade_unit(au_spec)
+    grouped_au = work.groupby(group_cols, dropna=False, observed=True)
+    for keys, group in grouped_au:
+        if not isinstance(keys, tuple):
+            keys = (keys,)
+        metal = contained_metal(group[au_spec.column], group[config.mass_column], au_unit)
+        ounces = float(metal[0]) if metal and metal[1] == "oz" else 0.0
+        row = {column: value for column, value in zip(group_cols, keys, strict=True)}
+        row["Au oz"] = ounces
+        au_rows.append(row)
+    au_table = pd.DataFrame(au_rows)
+
+    # --------------------------------------------------------------
+    # Build a common ordered X domain.
+    # --------------------------------------------------------------
+    domain = work[group_cols].drop_duplicates().copy()
+
+    def combo_key(row: pd.Series) -> tuple[Any, ...]:
+        values: list[Any] = []
+        for index, column in enumerate(group_cols):
+            role = primary_role if index == 0 else secondary_role
+            values.extend(_sampling_kpi_sort_key(row[column], role))
+        return tuple(values)
+
+    domain["__sort__"] = domain.apply(combo_key, axis=1)
+    domain = domain.sort_values("__sort__", kind="stable").drop(columns="__sort__").reset_index(drop=True)
+
+    domain["__x_id__"] = range(len(domain))
+    bar_table = bar_table.merge(domain, on=group_cols, how="left")
+    au_table = au_table.merge(domain, on=group_cols, how="left")
+    bar_table = bar_table.sort_values(["__x_id__", "__sampling_category__"])
+    au_table = au_table.sort_values("__x_id__")
+
+    display_arrays: list[list[Any]] = []
+    for index, column in enumerate(group_cols):
+        role = primary_role if index == 0 else secondary_role
+        display_arrays.append([
+            _sampling_kpi_display_value(value, role)
+            for value in domain[column].tolist()
+        ])
+
+    if len(display_arrays) == 1:
+        domain_x: Any = display_arrays[0]
+    else:
+        # Plotly multicategory axis: first list = primary category,
+        # second list = nested subcategory.
+        domain_x = display_arrays
+
+    # Lookup x values for each row via the ordered domain position.
+    def trace_x(ids: list[int]) -> Any:
+        if len(display_arrays) == 1:
+            return [display_arrays[0][int(i)] for i in ids]
+        return [
+            [level[int(i)] for i in ids]
+            for level in display_arrays
+        ]
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    category_order = ["Grade Control", "Measured", "Indicated"]
+    for category in category_order:
+        subset = bar_table[bar_table["__sampling_category__"].eq(category)].copy()
+        if subset.empty:
+            continue
+        ids = subset["__x_id__"].astype(int).tolist()
+        fig.add_trace(
+            go.Bar(
+                x=trace_x(ids),
+                y=subset["Sampling KPI (%)"],
+                name=category,
+                marker_color=SAMPLING_KPI_COLORS[category],
+                marker_line_color="white",
+                marker_line_width=0.5,
+                text=subset["Sampling KPI (%)"],
+                texttemplate="%{text:.0f}%",
+                textposition="inside",
+                insidetextfont={"color": "white", "size": 11},
+                customdata=subset[basis_col],
+                hovertemplate=(
+                    "%{fullData.name}<br>"
+                    "Sampling KPI: %{y:.1f}%<br>"
+                    f"{basis_label}: %{{customdata:,.0f}}"
+                    "<extra></extra>"
+                ),
+            ),
+            secondary_y=False,
+        )
+
+    au_ids = au_table["__x_id__"].astype(int).tolist()
+    fig.add_trace(
+        go.Scatter(
+            x=trace_x(au_ids),
+            y=au_table["Au oz"],
+            name="Au Oz",
+            mode="lines+markers",
+            line={"color": SAMPLING_KPI_AU_COLOR, "width": 4},
+            marker={
+                "color": SAMPLING_KPI_AU_COLOR,
+                "size": 8,
+                "line": {"color": SAMPLING_KPI_AU_COLOR, "width": 1},
+            },
+            hovertemplate="Au Oz: %{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+
+    fig.update_layout(
+        title={
+            "text": title_value,
+            "x": 0.5,
+            "xanchor": "center",
+            "font": {"size": 22, "color": "#111111"},
+        },
+        barmode="stack",
+        height=650,
+        plot_bgcolor="#FFFFFF",
+        paper_bgcolor="#FFFFFF",
+        legend={
+            "orientation": "h",
+            "y": -0.22,
+            "x": 0.5,
+            "xanchor": "center",
+            "title": None,
+        },
+        margin={"l": 65, "r": 80, "t": 100, "b": 130},
+        hovermode="x unified",
+        uniformtext={"minsize": 8, "mode": "show"},
+    )
+
+    fig.update_xaxes(
+        title_text=x_title,
+        showgrid=False,
+        tickangle=0,
+        linecolor="#BFBFBF",
+        automargin=True,
+    )
+    fig.update_yaxes(
+        title_text=y_title,
+        range=[0, 100],
+        tick0=0,
+        dtick=10,
+        ticksuffix="%",
+        showgrid=True,
+        gridcolor="#E2E2E2",
+        zeroline=True,
+        zerolinecolor="#D0D0D0",
+        secondary_y=False,
+    )
+    fig.update_yaxes(
+        title_text=y2_title,
+        rangemode="tozero",
+        tickformat=",",
+        showgrid=False,
+        color=SAMPLING_KPI_AU_COLOR,
+        secondary_y=True,
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+    hierarchy_text = primary_role if secondary_role == "None" else f"{primary_role} → {secondary_role}"
+    st.caption(
+        f"KPI basis: {basis_label}. X hierarchy: {hierarchy_text}. "
+        "Only Grade Control, Measured and Indicated records are included in both the stacked KPI and Au-ounce line."
+    )
+
+
 # Function: render_evaluation
 # Render single-model validation and resource-tabulation workflows.
 def render_evaluation() -> None:
@@ -5704,9 +6335,8 @@ def render_evaluation() -> None:
         format_func=lambda key: _configured_model_name(st.session_state.models[key], key),
     )
     bundle = st.session_state.models[model_name]
-    # Mandatory grade-validation rules: negative and zero grades are errors.
-    bundle.config.reject_negative_grades = True
-    bundle.config.require_positive_grades = True
+    # Grade-validation controls default to enabled in ModelConfig, but remain
+    # editable in Variables & controls and must not be forced on every rerun.
     display_model_name = _configured_model_name(bundle, model_name)
     _render_active_model_strip(display_model_name, bundle)
     _render_master_year_filter_sidebar([bundle], f"eval_{_safe_key(model_name)}")
@@ -5724,6 +6354,7 @@ def render_evaluation() -> None:
         "Variables & controls",
         "Tabulation by Categ",
         "Tabulation by Destination",
+        "Sampling KPI",
     ])
 
     with tabs[0]:
@@ -5737,6 +6368,14 @@ def render_evaluation() -> None:
 
     with tabs[2]:
         _render_resource_by_destination(scoped_bundle, display_model_name, filtered_data, sidebar_filters)
+
+    with tabs[3]:
+        _sampling_kpi_chart(
+            filtered_data,
+            scoped_bundle.config,
+            display_model_name,
+            f"eval_{_safe_key(model_name)}",
+        )
 
 
 FIVE_YEAR_ORE_DESTINATIONS = ["H1", "H2", "L1", "L2", "L3", "M1", "M2", "M3"]
@@ -6151,12 +6790,34 @@ def render_comparison() -> None:
 
     model_names = list(st.session_state.models)
     selection_key = "comparison_selected_models"
+    known_models_key = "comparison_known_models"
+
+    # Comparison is intended to use every model the user has configured.
+    # On first entry select all available models. On later reruns, preserve any
+    # intentional manual deselections but automatically append models that were
+    # configured after the previous visit to Model Comparison.
+    previous_known_models = [
+        name for name in st.session_state.get(known_models_key, [])
+        if name in model_names
+    ]
+
     if selection_key not in st.session_state:
-        st.session_state[selection_key] = model_names[:2]
+        st.session_state[selection_key] = list(model_names)
     else:
-        cleaned_selection = [name for name in st.session_state[selection_key] if name in model_names]
-        if cleaned_selection != st.session_state[selection_key]:
-            st.session_state[selection_key] = cleaned_selection
+        current_selection = [
+            name for name in st.session_state[selection_key]
+            if name in model_names
+        ]
+        newly_configured_models = [
+            name for name in model_names
+            if name not in previous_known_models
+        ]
+        for name in newly_configured_models:
+            if name not in current_selection:
+                current_selection.append(name)
+        st.session_state[selection_key] = current_selection
+
+    st.session_state[known_models_key] = list(model_names)
 
     workspace_display_names = {
         key: _configured_model_name(st.session_state.models[key], key)

@@ -42,6 +42,7 @@ secrets.toml
 # Generated reports and office documents
 *.pdf
 *.doc
+*.PNG
 *.docx
 *.docm
 *.ppt
