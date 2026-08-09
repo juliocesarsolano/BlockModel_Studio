@@ -1078,11 +1078,30 @@ METTYPE_COLORS = {
     "MOBS": "#666666",
     "MNVC": "#A6A6A6",
     "MNBS": "#BFBFBF",
+    # Requested alphanumeric Mettype labels used in Model Evaluation charts.
+    "1 - mobs": "#666666",
+    "2 - movc": "#00FF00",
+    "4 - mnbs": "#666666",
+    "5 - mnvc": "#00FF00",
+    "6 - mnsp": "#00FF00",
     # Legacy aliases kept for compatibility with older model files.
     "VCL": "#00FF00",
     "VOLCANIC": "#00FF00",
     "BSD": "#666666",
     "BLACK SEDIMENT": "#666666",
+}
+
+METTYPE_DISPLAY_LABELS = {
+    "1": "1 - mobs",
+    "MOBS": "1 - mobs",
+    "2": "2 - movc",
+    "MOVC": "2 - movc",
+    "4": "4 - mnbs",
+    "MNBS": "4 - mnbs",
+    "5": "5 - mnvc",
+    "MNVC": "5 - mnvc",
+    "6": "6 - mnsp",
+    "MNSP": "6 - mnsp",
 }
 
 RESOURCE_CATEGORY_COLORS = {
@@ -1194,6 +1213,40 @@ def _normalize_destination_code(value: Any) -> str:
 def _display_destination(value: Any) -> str:
     code = _normalize_destination_code(value)
     return code.upper() if code else ""
+
+
+# Function: _display_mettype
+# Display the requested alphanumeric Mettype classification in evaluation charts.
+def _display_mettype(value: Any) -> str:
+    if pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.notna(numeric) and float(numeric).is_integer():
+        numeric_key = str(int(numeric))
+        if numeric_key in METTYPE_DISPLAY_LABELS:
+            return METTYPE_DISPLAY_LABELS[numeric_key]
+
+    normalized = re.sub(r"[^A-Za-z0-9]+", "", text).upper()
+    if normalized in METTYPE_DISPLAY_LABELS:
+        return METTYPE_DISPLAY_LABELS[normalized]
+
+    prefixed_match = re.fullmatch(r"([12456])(?:\.0)?[\s_\-]*([A-Za-z]+)", text)
+    if prefixed_match:
+        code = prefixed_match.group(1)
+        mnemonic = prefixed_match.group(2).upper()
+        expected = {
+            "1": "MOBS",
+            "2": "MOVC",
+            "4": "MNBS",
+            "5": "MNVC",
+            "6": "MNSP",
+        }.get(code)
+        if mnemonic == expected:
+            return METTYPE_DISPLAY_LABELS[code]
+
+    return text.upper()
 
 
 # Function: _block_model_column
@@ -3550,6 +3603,49 @@ def _plot_mettype_distribution(data: pd.DataFrame, config: ModelConfig) -> None:
     _plot_role_distribution(data, config, "Mettype", "Met-Type Ore Tonnes Distribution", METTYPE_COLORS)
 
 
+# Function: _plot_ore_tonnes_by_phase_distribution
+# Replace the repeated destination pie with ore tonnes distributed by mining phase.
+def _plot_ore_tonnes_by_phase_distribution(data: pd.DataFrame, config: ModelConfig) -> None:
+    phase_col = _phase_column(config, data)
+    dest_col = config.column_for_role("Destination")
+    if not phase_col or phase_col not in data.columns:
+        st.info("Configure a Phase/Pit_Phase variable to activate this chart.")
+        return
+    if not dest_col or dest_col not in data.columns or data.empty:
+        st.info("Configure a Destination variable to activate this chart.")
+        return
+
+    work = data.copy()
+    work["__dest_code__"] = work[dest_col].map(_normalize_destination_code)
+    ore = work[work["__dest_code__"].isin(ORE_DESTINATION_CODES)].copy()
+    if ore.empty:
+        st.info("No ore tonnes are available for the current filters.")
+        return
+
+    table = _group_tonnes(ore, config, [phase_col])
+    if table.empty:
+        return
+
+    ton_col = tonnage_column_name(config)
+    table["Phase"] = table[phase_col].astype(str).str.strip()
+    table = table.groupby("Phase", dropna=False, observed=True)[ton_col].sum().reset_index()
+    phase_order = sorted(table["Phase"].dropna().tolist(), key=_natural_phase_sort_key)
+    order_map = {phase: index for index, phase in enumerate(phase_order)}
+    table["__phase_order__"] = table["Phase"].map(order_map).fillna(len(order_map))
+    table = table.sort_values("__phase_order__").drop(columns="__phase_order__")
+
+    fig = px.pie(
+        table,
+        names="Phase",
+        values=ton_col,
+        hole=0.58,
+        title="Ore Tonnes by Phase",
+    )
+    fig.update_traces(textinfo="percent+label")
+    fig.update_layout(height=370, margin={"l": 20, "r": 20, "t": 60, "b": 20})
+    st.plotly_chart(fig, use_container_width=True)
+
+
 # Function: _plot_role_distribution
 # Build and display the role distribution chart.
 def _plot_role_distribution(data: pd.DataFrame, config: ModelConfig, role: str, title: str, color_map: dict[str, str]) -> None:
@@ -3564,7 +3660,7 @@ def _plot_role_distribution(data: pd.DataFrame, config: ModelConfig, role: str, 
     label = config.category_label(role_col)
     table[label] = table[role_col].astype(str).str.strip()
     if role == "Mettype":
-        table[label] = table[label].str.upper()
+        table[label] = table[label].map(_display_mettype)
     if role == "Destination":
         table[label] = table[label].map(_display_destination)
     if role == "Category":
@@ -3605,6 +3701,9 @@ def _plot_stacked_by_bench(data: pd.DataFrame, config: ModelConfig, color_role: 
         color_order = {color_label: RESOURCE_CATEGORY_ORDER}
     elif color_role == "Destination":
         table[color_label] = table[color_label].map(_display_destination)
+        color_order = None
+    elif color_role == "Mettype":
+        table[color_label] = table[color_label].map(_display_mettype)
         color_order = None
     else:
         table[color_label] = table[color_label].astype(str).str.strip().str.upper()
@@ -4061,8 +4160,8 @@ def _render_variable_controls(bundle: ModelBundle, model_name: str) -> None:
                 "Clear this option when zero grades are acceptable for the model being evaluated."
             ),
         )
-        year_min = int(validation_cols[2].number_input("Minimum valid year", value=int(config.year_min)))
-        year_max = int(validation_cols[3].number_input("Maximum valid year", value=int(config.year_max)))
+        year_min = int(validation_cols[2].number_input("Minimum valid year", value=int(config.year_min), step=1, format="%d"))
+        year_max = int(validation_cols[3].number_input("Maximum valid year", value=int(config.year_max), step=1, format="%d"))
 
         submitted = st.form_submit_button("Apply controls and revalidate", type="primary", use_container_width=True)
 
@@ -4151,7 +4250,7 @@ def _render_resource_dashboard(
     with pie_cols[0]:
         _plot_mettype_distribution(filtered, config)
     with pie_cols[1]:
-        _plot_role_distribution(filtered, config, "Destination", "Destination Ore Tonnes Distribution", DESTINATION_COLORS)
+        _plot_ore_tonnes_by_phase_distribution(filtered, config)
 
     st.markdown("#### Resource Category Distribution by Bench")
     _plot_stacked_by_bench(
@@ -5466,8 +5565,8 @@ def render_setup() -> None:
             st.session_state.setup_year_min = int(validation_defaults().get("year_min", 1900))
         if "setup_year_max" not in st.session_state:
             st.session_state.setup_year_max = int(validation_defaults().get("year_max", 2200))
-        year_min = int(year_limits[0].number_input("Minimum valid year", key="setup_year_min"))
-        year_max = int(year_limits[1].number_input("Maximum valid year", key="setup_year_max"))
+        year_min = int(year_limits[0].number_input("Minimum valid year", key="setup_year_min", step=1, format="%d"))
+        year_max = int(year_limits[1].number_input("Maximum valid year", key="setup_year_max", step=1, format="%d"))
 
         _setup_step(3, "Validate and save", "Create the configured model in this workspace and make it available to Evaluation, Comparison and Reports.")
         submitted = st.form_submit_button("Validate and save model", type="primary", use_container_width=True)
