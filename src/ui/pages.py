@@ -1072,23 +1072,23 @@ METTYPE_COLORS = {
     # Corporate Block Model Mettype palette.
     # The Mettype plotting helpers convert values to uppercase before plotting.
     "NONE": "#FFFFFF",
-    "MNSP": "#00FF00",
-    "MOVC": "#00C8C8",
+    "MNSP": "#9ACD32",
+    "MOVC": "#1B5E20",
     "DEF": "#0057D9",
-    "MOBS": "#666666",
-    "MNVC": "#A6A6A6",
-    "MNBS": "#BFBFBF",
+    "MOBS": "#4D4D4D",
+    "MNVC": "#43A047",
+    "MNBS": "#B0B0B0",
     # Requested alphanumeric Mettype labels used in Model Evaluation charts.
-    "1 - mobs": "#666666",
-    "2 - movc": "#00FF00",
-    "4 - mnbs": "#666666",
-    "5 - mnvc": "#00FF00",
-    "6 - mnsp": "#00FF00",
+    "1 - mobs": "#4D4D4D",
+    "2 - movc": "#1B5E20",
+    "4 - mnbs": "#B0B0B0",
+    "5 - mnvc": "#43A047",
+    "6 - mnsp": "#9ACD32",
     # Legacy aliases kept for compatibility with older model files.
-    "VCL": "#00FF00",
-    "VOLCANIC": "#00FF00",
-    "BSD": "#666666",
-    "BLACK SEDIMENT": "#666666",
+    "VCL": "#43A047",
+    "VOLCANIC": "#43A047",
+    "BSD": "#4D4D4D",
+    "BLACK SEDIMENT": "#4D4D4D",
 }
 
 METTYPE_DISPLAY_LABELS = {
@@ -1103,6 +1103,7 @@ METTYPE_DISPLAY_LABELS = {
     "6": "6 - mnsp",
     "MNSP": "6 - mnsp",
 }
+METTYPE_DISPLAY_ORDER = ["1 - mobs", "2 - movc", "4 - mnbs", "5 - mnvc", "6 - mnsp"]
 
 RESOURCE_CATEGORY_COLORS = {
     "15_Grade Control": "#ED7D31",
@@ -3661,6 +3662,9 @@ def _plot_role_distribution(data: pd.DataFrame, config: ModelConfig, role: str, 
     table[label] = table[role_col].astype(str).str.strip()
     if role == "Mettype":
         table[label] = table[label].map(_display_mettype)
+        order_map = {name: index for index, name in enumerate(METTYPE_DISPLAY_ORDER)}
+        table["__mettype_order__"] = table[label].map(order_map).fillna(len(order_map))
+        table = table.sort_values("__mettype_order__").drop(columns="__mettype_order__")
     if role == "Destination":
         table[label] = table[label].map(_display_destination)
     if role == "Category":
@@ -3704,7 +3708,7 @@ def _plot_stacked_by_bench(data: pd.DataFrame, config: ModelConfig, color_role: 
         color_order = None
     elif color_role == "Mettype":
         table[color_label] = table[color_label].map(_display_mettype)
-        color_order = None
+        color_order = {color_label: METTYPE_DISPLAY_ORDER}
     else:
         table[color_label] = table[color_label].astype(str).str.strip().str.upper()
         color_order = None
@@ -3951,6 +3955,9 @@ def _plot_stacked_by_year(data: pd.DataFrame, config: ModelConfig, color_role: s
     elif color_role == "Destination":
         table[color_label] = table[color_label].map(_display_destination)
         category_orders = None
+    elif color_role == "Mettype":
+        table[color_label] = table[color_label].map(_display_mettype)
+        category_orders = {color_label: METTYPE_DISPLAY_ORDER}
     else:
         table[color_label] = table[color_label].astype(str).str.strip().str.upper()
         category_orders = None
@@ -4814,6 +4821,45 @@ def _set_navigation_page(page_name: str) -> None:
     st.session_state["nav_page"] = page_name
 
 
+# Function: _scroll_to_page_top
+# Scroll only when the active top-level page changes. Normal widget reruns stay
+# at the user's current position within the page.
+def _scroll_to_page_top(page_name: str) -> None:
+    state_key = "_bm_last_rendered_page"
+    if st.session_state.get(state_key) == page_name:
+        return
+    st.session_state[state_key] = page_name
+    components.html(
+        """
+        <script>
+        (() => {
+            const parentWindow = window.parent;
+            const parentDocument = parentWindow.document;
+            const targets = [
+                parentDocument.querySelector('[data-testid="stMain"]'),
+                parentDocument.querySelector('section.main'),
+                parentDocument.scrollingElement,
+                parentDocument.documentElement,
+                parentDocument.body
+            ];
+            targets.forEach((target) => {
+                if (!target) return;
+                if (typeof target.scrollTo === 'function') {
+                    target.scrollTo(0, 0);
+                } else {
+                    target.scrollTop = 0;
+                }
+            });
+            parentWindow.scrollTo(0, 0);
+        })();
+        </script>
+        """,
+        height=0,
+        width=0,
+        scrolling=False,
+    )
+
+
 # Function: _render_no_models_state
 # Render the no models state interface section.
 def _render_no_models_state(message: str, minimum: int = 1) -> None:
@@ -4888,6 +4934,7 @@ def _render_volume_gate_state(passed: bool, message: str, model_count: int, tole
 # Function: render_home
 # Render the home application page.
 def render_home() -> None:
+    _scroll_to_page_top("Home")
     st.markdown(
         f"""
         <section class="bm-home-masthead">
@@ -5302,6 +5349,7 @@ def _copy_setup_configuration_from_model(
 # Function: render_setup
 # Render model upload, variable mapping, units and validation configuration.
 def render_setup() -> None:
+    _scroll_to_page_top("Model Setup")
     page_header("Model Setup", "Load a block-model tabulation and map the variables required for analysis.")
 
     saved_notice = st.session_state.pop("setup_model_saved_notice", None)
@@ -5940,6 +5988,7 @@ def _model_description_recommended_checks(scoped_bundles: dict[str, ModelBundle]
 # Function: render_model_description
 # Render the model description application page.
 def render_model_description() -> None:
+    _scroll_to_page_top("Model Description")
     header_placeholder = st.empty()
     if not st.session_state.models:
         with header_placeholder.container():
@@ -6419,6 +6468,7 @@ def _sampling_kpi_chart(
 # Function: render_evaluation
 # Render single-model validation and resource-tabulation workflows.
 def render_evaluation() -> None:
+    _scroll_to_page_top("Model Evaluation")
     _apply_premium_tab_styles()
     header_placeholder = st.empty()
     if not st.session_state.models:
@@ -6875,6 +6925,7 @@ def _render_five_year_ore_comparison(
 # Function: render_comparison
 # Render Model Comparison after enforcing the mandatory global-volume gate.
 def render_comparison() -> None:
+    _scroll_to_page_top("Model Comparison")
     _apply_premium_tab_styles()
     header_placeholder = st.empty()
     if len(st.session_state.models) < 2:
@@ -8032,6 +8083,9 @@ def _role_bench_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, mo
     elif role == "Destination":
         table[role] = table[role_col].map(_display_destination)
         order_cols = ["HG", "LG", "MG", "MW", "Waste", *sorted(table[role].dropna().astype(str).unique().tolist())]
+    elif role == "Mettype":
+        table[role] = table[role_col].map(_display_mettype)
+        order_cols = METTYPE_DISPLAY_ORDER
     else:
         table[role] = table[role_col].astype(str).str.strip().str.upper()
         order_cols = sorted(table[role].dropna().astype(str).unique().tolist())
@@ -8069,6 +8123,9 @@ def _role_pie_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, mode
     elif role == "Destination":
         table[role] = table[role_col].map(_display_destination)
         order = ["HG", "LG", "MG", "MW", "Waste"]
+    elif role == "Mettype":
+        table[role] = table[role_col].map(_display_mettype)
+        order = METTYPE_DISPLAY_ORDER
     else:
         table[role] = table[role_col].astype(str).str.strip().str.upper()
         order = sorted(table[role].dropna().unique().tolist())
@@ -8170,6 +8227,9 @@ def _year_role_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, mod
     elif role == "Destination":
         table[role] = table[role_col].map(_display_destination)
         order_cols = ["HG", "LG", "MG", "MW", "Waste"]
+    elif role == "Mettype":
+        table[role] = table[role_col].map(_display_mettype)
+        order_cols = METTYPE_DISPLAY_ORDER
     else:
         table[role] = table[role_col].astype(str).str.strip().str.upper()
         order_cols = sorted(table[role].dropna().astype(str).unique().tolist())
@@ -8637,6 +8697,7 @@ def _report_pdf_bytes(
 # Function: render_reports
 # Render automatic report selection, preview and Excel/PDF downloads.
 def render_reports() -> None:
+    _scroll_to_page_top("Reports")
     header_placeholder = st.empty()
     if not st.session_state.models:
         with header_placeholder.container():
@@ -8736,6 +8797,7 @@ def render_reports() -> None:
 # responsible-use notice.
 def render_about() -> None:
     """Render the application information, authorship and technical-use notice."""
+    _scroll_to_page_top("About")
     page_header(
         "About",
         "Application information, technical scope, authorship and responsible-use notice.",
@@ -8963,4 +9025,3 @@ def render_about() -> None:
         """,
         unsafe_allow_html=True,
     )
-
