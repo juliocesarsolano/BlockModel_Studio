@@ -188,6 +188,78 @@ def _model_display_names(bundles: dict[str, ModelBundle]) -> dict[str, str]:
     return {key: _configured_model_name(bundle, key) for key, bundle in bundles.items()}
 
 
+PRECIOUS_METAL_DISPLAY_UNITS = ["oz", "koz", "Moz"]
+COPPER_METAL_DISPLAY_UNITS = ["t", "lb", "Kg"]
+
+
+def _model_metal_unit_preferences(model_name: str | None) -> tuple[str, str]:
+    """Return the saved contained-metal display units for one configured model."""
+    preferences = st.session_state.setdefault("model_metal_display_units", {})
+    stored = preferences.get(str(model_name or ""), {})
+    precious_unit = str(stored.get("precious", "oz"))
+    copper_unit = str(stored.get("copper", "lb"))
+    if precious_unit not in PRECIOUS_METAL_DISPLAY_UNITS:
+        precious_unit = "oz"
+    if copper_unit not in COPPER_METAL_DISPLAY_UNITS:
+        copper_unit = "lb"
+    return precious_unit, copper_unit
+
+
+def _config_metal_unit_preferences(config: ModelConfig) -> tuple[str, str]:
+    return _model_metal_unit_preferences(str(getattr(config, "model_name", "") or ""))
+
+
+def _precious_metal_scale(unit: str) -> tuple[float, int]:
+    """Return the ounce divisor and preferred display decimals."""
+    if unit == "Moz":
+        return 1_000_000.0, 3
+    if unit == "koz":
+        return 1_000.0, 2
+    return 1.0, 0
+
+
+def _copper_metal_scale(unit: str) -> tuple[float, int]:
+    """Return the multiplier from contained metric tonnes and display decimals."""
+    if unit == "lb":
+        return 2204.62262185, 0
+    if unit == "Kg":
+        return 1_000.0, 0
+    return 1.0, 0
+
+
+def _set_model_metal_unit_preferences(model_name: str, precious_unit: str, copper_unit: str) -> None:
+    preferences = st.session_state.setdefault("model_metal_display_units", {})
+    preferences[str(model_name)] = {
+        "precious": precious_unit if precious_unit in PRECIOUS_METAL_DISPLAY_UNITS else "oz",
+        "copper": copper_unit if copper_unit in COPPER_METAL_DISPLAY_UNITS else "lb",
+    }
+
+
+def _replace_model_key_in_session_references(old_key: str, new_key: str) -> None:
+    """Keep model selectors and configured comparison order valid after a rename."""
+    if old_key == new_key:
+        return
+    for key in [
+        "comparison_selected_models",
+        "comparison_known_models",
+        "comparison_model_display_order",
+    ]:
+        if key in st.session_state:
+            st.session_state[key] = [
+                new_key if value == old_key else value
+                for value in st.session_state.get(key, [])
+            ]
+    for key in [
+        "eval_model",
+        "comparison_model_to_reorder",
+        "comparison_destination_reference_model",
+        "five_year_ore_reference_model",
+        "setup_copy_source_model",
+    ]:
+        if st.session_state.get(key) == old_key:
+            st.session_state[key] = new_key
+
+
 def _destination_report_title(bundle: ModelBundle, fallback: str | None = None) -> str:
     """Return the Report title configured by the user for destination tables.
 
@@ -2173,6 +2245,42 @@ def _configured_models_inventory() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _begin_model_edit(model_key: str) -> None:
+    """Load a configured model back into Model Setup without another upload."""
+    bundle = st.session_state.models[model_key]
+    config = bundle.config
+    frame = bundle.raw_data.copy()
+
+    _reset_setup_mapping_widget_state()
+    st.session_state.setup_raw = frame
+    st.session_state.setup_filename = f"Editing configured model: {model_key}"
+    st.session_state.setup_edit_original_key = model_key
+    st.session_state.setup_model_name = str(model_key)
+    st.session_state.setup_model_type = config.model_type if config.model_type in MODEL_TYPES else MODEL_TYPES[0]
+    st.session_state.setup_report_title = str(config.report_title or config.model_name or model_key)
+
+    _copy_setup_configuration_from_model(
+        bundle,
+        list(frame.columns),
+        copy_core=True,
+        copy_grades=True,
+        copy_categories=True,
+        copy_preferences=True,
+    )
+    precious_unit, copper_unit = _model_metal_unit_preferences(model_key)
+    st.session_state.setup_precious_metal_unit = precious_unit
+    st.session_state.setup_copper_metal_unit = copper_unit
+    st.session_state.pop("setup_copy_configuration_notice", None)
+
+
+def _cancel_model_edit() -> None:
+    _reset_setup_mapping_widget_state()
+    st.session_state.setup_raw = None
+    st.session_state.setup_filename = ""
+    st.session_state.pop("setup_edit_original_key", None)
+    st.session_state.setup_uploader_version = int(st.session_state.get("setup_uploader_version", 0)) + 1
+
+
 # Function: _render_configured_models_manager
 # Render the configured models manager interface section.
 def _render_configured_models_manager(key_prefix: str = "setup") -> None:
@@ -2182,6 +2290,32 @@ def _render_configured_models_manager(key_prefix: str = "setup") -> None:
         return
 
     st.dataframe(_configured_models_inventory(), use_container_width=True, hide_index=True)
+
+    st.markdown("#### Edit model")
+    st.caption("Reload a configured model below to change its identity, mapped variables, units, decimals or validation controls without uploading the source file again.")
+    edit_cols = st.columns([2.2, 1.0, 1.0])
+    model_to_edit = edit_cols[0].selectbox(
+        "Model to edit",
+        list(st.session_state.models),
+        key=f"{key_prefix}_model_to_edit",
+    )
+    if edit_cols[1].button(
+        "Edit",
+        key=f"{key_prefix}_edit_model_button",
+        use_container_width=True,
+    ):
+        _begin_model_edit(model_to_edit)
+        st.rerun()
+
+    active_edit = st.session_state.get("setup_edit_original_key")
+    if active_edit:
+        edit_cols[2].button(
+            "Cancel edit",
+            key=f"{key_prefix}_cancel_model_edit_button",
+            use_container_width=True,
+            on_click=_cancel_model_edit,
+        )
+        st.info(f"Editing model '{active_edit}'. Its saved raw data and configuration are loaded in the form below.")
 
     st.markdown("#### Delete model")
     st.caption("Use this control only when you need to remove a configured model before continuing with evaluation or comparison.")
@@ -2202,6 +2336,18 @@ def _render_configured_models_manager(key_prefix: str = "setup") -> None:
         use_container_width=True,
     ):
         st.session_state.models.pop(model_to_delete, None)
+        st.session_state.setdefault("model_metal_display_units", {}).pop(model_to_delete, None)
+        for state_key in ["comparison_selected_models", "comparison_known_models", "comparison_model_display_order"]:
+            if state_key in st.session_state:
+                st.session_state[state_key] = [
+                    value for value in st.session_state.get(state_key, [])
+                    if value != model_to_delete
+                ]
+        for state_key in ["eval_model", "comparison_model_to_reorder", "comparison_destination_reference_model", "five_year_ore_reference_model"]:
+            if st.session_state.get(state_key) == model_to_delete:
+                st.session_state.pop(state_key, None)
+        if st.session_state.get("setup_edit_original_key") == model_to_delete:
+            _cancel_model_edit()
         st.session_state.pop(f"{key_prefix}_model_to_delete", None)
         st.session_state.pop(f"{key_prefix}_confirm_model_delete", None)
         st.success(f"Model '{model_to_delete}' deleted.")
@@ -2425,20 +2571,24 @@ def _resource_row(label: str, subset: pd.DataFrame, config: ModelConfig, specs: 
         header = _resource_grade_header(spec)
         row[header] = weighted_mean(subset[spec.column], subset[config.mass_column]) if not subset.empty and spec.column in subset.columns else float("nan")
 
+    precious_unit, copper_unit = _config_metal_unit_preferences(config)
+    precious_divisor, _ = _precious_metal_scale(precious_unit)
+    copper_multiplier, _ = _copper_metal_scale(copper_unit)
+
     for metal_label in ["Au", "Ag"]:
         spec = _find_metal_grade_spec(specs, metal_label)
         if spec and spec.column in subset.columns and not subset.empty:
             metal = contained_metal(subset[spec.column], subset[config.mass_column], _effective_grade_unit(spec))
-            row[f"{metal_label} (oz)"] = metal[0] if metal and metal[1] == "oz" else float("nan")
+            row[f"{metal_label} ({precious_unit})"] = metal[0] / precious_divisor if metal and metal[1] == "oz" else float("nan")
         else:
-            row[f"{metal_label} (oz)"] = float("nan")
+            row[f"{metal_label} ({precious_unit})"] = float("nan")
 
     cu_spec = _find_metal_grade_spec(specs, "Cu")
     if cu_spec and cu_spec.column in subset.columns and not subset.empty:
         cu_tonnes = contained_metal(subset[cu_spec.column], subset[config.mass_column], _effective_grade_unit(cu_spec))
-        row["Cu (lb)"] = cu_tonnes[0] * 2204.62262185 if cu_tonnes and cu_tonnes[1] == "t" else float("nan")
+        row[f"Cu ({copper_unit})"] = cu_tonnes[0] * copper_multiplier if cu_tonnes and cu_tonnes[1] == "t" else float("nan")
     else:
-        row["Cu (lb)"] = float("nan")
+        row[f"Cu ({copper_unit})"] = float("nan")
     return row
 
 # Function: _resource_tabulation
@@ -2491,7 +2641,14 @@ def _barrick_number_formatters(table: pd.DataFrame, config: ModelConfig) -> dict
             formatters[column] = f"{{:,.{config.tonnage_decimals}f}}"
         elif "volume" in lower and pd.api.types.is_numeric_dtype(table[column]):
             formatters[column] = "{:,.0f}"
-        elif column.endswith("(oz)") or column.endswith("(lb)") or "contained" in lower:
+        elif any(column.endswith(f"({unit})") for unit in ["oz", "koz", "Moz", "t", "lb", "Kg"]):
+            if column.endswith("(Moz)"):
+                formatters[column] = "{:,.3f}"
+            elif column.endswith("(koz)"):
+                formatters[column] = "{:,.2f}"
+            else:
+                formatters[column] = "{:,.0f}"
+        elif "contained" in lower:
             formatters[column] = "{:,.0f}"
         elif column != "Category" and pd.api.types.is_numeric_dtype(table[column]):
             formatters[column] = f"{{:,.{config.grade_decimals}f}}"
@@ -2819,6 +2976,8 @@ def _destination_summary_table(
     data: pd.DataFrame,
     config: ModelConfig,
     model_name: str | None = None,
+    precious_unit_override: str | None = None,
+    copper_unit_override: str | None = None,
 ) -> pd.DataFrame:
     dest_col = config.column_for_role("Destination")
 
@@ -2845,6 +3004,11 @@ def _destination_summary_table(
     total_tonnes = ore_tonnes + waste_tonnes
     strip_ratio = waste_tonnes / ore_tonnes if ore_tonnes > 0 else float("nan")
     tonnage_decimals = max(2, int(config.tonnage_decimals))
+    configured_precious_unit, configured_copper_unit = _config_metal_unit_preferences(config)
+    precious_unit = precious_unit_override if precious_unit_override in PRECIOUS_METAL_DISPLAY_UNITS else configured_precious_unit
+    copper_unit = copper_unit_override if copper_unit_override in COPPER_METAL_DISPLAY_UNITS else configured_copper_unit
+    precious_divisor, precious_decimals = _precious_metal_scale(precious_unit)
+    copper_multiplier, copper_decimals = _copper_metal_scale(copper_unit)
 
     rows: list[dict[str, Any]] = []
 
@@ -2944,8 +3108,8 @@ def _destination_summary_table(
     au_total_oz = _contained_ounces_for_label(ore_data, config, "Au")
     add(
         "Au Metal",
-        "Moz",
-        _format_destination_value((au_total_oz or 0.0) / 1_000_000, 3),
+        precious_unit,
+        _format_destination_value((au_total_oz or 0.0) / precious_divisor, precious_decimals),
         "section",
         au_total_oz,
     )
@@ -2954,8 +3118,8 @@ def _destination_summary_table(
         ounces = _contained_ounces_for_label(subset, config, "Au")
         add(
             code,
-            "Moz",
-            _format_destination_value((ounces or 0.0) / 1_000_000, 3),
+            precious_unit,
+            _format_destination_value((ounces or 0.0) / precious_divisor, precious_decimals),
             raw_value=ounces,
         )
     for code in OPTIONAL_ORE_DESTINATION_CODES:
@@ -2964,8 +3128,8 @@ def _destination_summary_table(
             ounces = _contained_ounces_for_label(subset, config, "Au")
             add(
                 code,
-                "Moz",
-                _format_destination_value((ounces or 0.0) / 1_000_000, 3),
+                precious_unit,
+                _format_destination_value((ounces or 0.0) / precious_divisor, precious_decimals),
                 raw_value=ounces,
             )
 
@@ -2974,14 +3138,23 @@ def _destination_summary_table(
     ag_total_oz = _contained_ounces_for_label(ore_data, config, "Ag")
     add(
         "Ag Metal",
-        "Moz",
-        _format_destination_value((ag_total_oz or 0.0) / 1_000_000, 3),
+        precious_unit,
+        _format_destination_value((ag_total_oz or 0.0) / precious_divisor, precious_decimals),
         "section",
         ag_total_oz,
     )
 
+    cu_contained_tonnes = _contained_tonnes_for_label(ore_data, config, "Cu")
+    add(
+        "Cu Metal",
+        copper_unit,
+        _format_destination_value(cu_contained_tonnes * copper_multiplier, copper_decimals)
+        if cu_contained_tonnes is not None else "-",
+        "section",
+        cu_contained_tonnes,
+    )
+
     contained_tonne_rows = [
-        ("Cu Metal", "Cu"),
         ("Stot", "Stot"),
         ("S2", "S2"),
         ("Ctot", "Ctot"),
@@ -3387,10 +3560,22 @@ def _destination_comparison_table(bundles: dict[str, ModelBundle], reference_mod
         key: _destination_report_title(bundle, key)
         for key, bundle in bundles.items()
     }
+    first_bundle = next(iter(bundles.values()), None)
+    comparison_precious_unit, comparison_copper_unit = (
+        _config_metal_unit_preferences(first_bundle.config)
+        if first_bundle is not None
+        else ("oz", "lb")
+    )
 
     for model_key, bundle in bundles.items():
         report_title = report_titles[model_key]
-        table = _destination_summary_table(bundle.data, bundle.config, report_title)
+        table = _destination_summary_table(
+            bundle.data,
+            bundle.config,
+            report_title,
+            precious_unit_override=comparison_precious_unit,
+            copper_unit_override=comparison_copper_unit,
+        )
         if table.empty:
             model_values[model_key] = {}
             model_raw_values[model_key] = {}
@@ -3444,6 +3629,13 @@ def _destination_comparison_table(bundles: dict[str, ModelBundle], reference_mod
 def _render_comparison_resource_by_destination(bundles: dict[str, ModelBundle], selected_model_names: list[str]) -> None:
     st.subheader("Tabulation by Destination")
     st.caption("Select the reference model used to calculate the relative difference columns. Δ% = (model - reference) / reference × 100.")
+
+    first_model = selected_model_names[0]
+    first_precious_unit, first_copper_unit = _config_metal_unit_preferences(bundles[first_model].config)
+    st.caption(
+        f"Contained-metal values are normalized to the first model's display units: Au/Ag = {first_precious_unit}; "
+        f"Cu = {first_copper_unit}."
+    )
 
     display_names = _model_display_names(bundles)
     reference_model = st.selectbox(
@@ -3615,6 +3807,38 @@ def _plot_mettype_distribution(data: pd.DataFrame, config: ModelConfig) -> None:
     _plot_role_distribution(data, config, "Mettype", "Met-Type Ore Tonnes Distribution", METTYPE_COLORS)
 
 
+def _apply_readable_pie_labels(
+    fig: go.Figure,
+    table: pd.DataFrame,
+    label_column: str,
+    value_column: str,
+    minimum_label_percent: float = 3.0,
+) -> None:
+    """Place readable labels outside and leave very small slices in the legend."""
+    values = pd.to_numeric(table[value_column], errors="coerce").fillna(0.0).clip(lower=0)
+    total = float(values.sum())
+    labels = table[label_column].astype(str).tolist()
+    percentages = values / total * 100.0 if total > 0 else values * 0.0
+    visible_text = [
+        f"{label}<br>{percentage:.1f}%" if percentage >= minimum_label_percent else ""
+        for label, percentage in zip(labels, percentages.tolist(), strict=True)
+    ]
+    fig.update_traces(
+        text=visible_text,
+        textinfo="text",
+        textposition="outside",
+        automargin=True,
+        outsidetextfont={"size": 11, "color": "#26323A"},
+        marker={"line": {"color": "#FFFFFF", "width": 1.0}},
+        hovertemplate="%{label}<br>%{value:,.2f}<br>%{percent}<extra></extra>",
+    )
+    fig.update_layout(
+        showlegend=True,
+        legend={"orientation": "h", "y": -0.12, "x": 0.5, "xanchor": "center"},
+        margin={"l": 55, "r": 55, "t": 60, "b": 75},
+    )
+
+
 # Function: _plot_ore_tonnes_by_phase_distribution
 # Replace the repeated destination pie with ore tonnes distributed by mining phase.
 def _plot_ore_tonnes_by_phase_distribution(data: pd.DataFrame, config: ModelConfig) -> None:
@@ -3653,8 +3877,8 @@ def _plot_ore_tonnes_by_phase_distribution(data: pd.DataFrame, config: ModelConf
         hole=0.58,
         title="Ore Tonnes by Phase",
     )
-    fig.update_traces(textinfo="percent+label")
-    fig.update_layout(height=370, margin={"l": 20, "r": 20, "t": 60, "b": 20})
+    _apply_readable_pie_labels(fig, table, "Phase", ton_col)
+    fig.update_layout(height=420)
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -3692,8 +3916,8 @@ def _plot_role_distribution(data: pd.DataFrame, config: ModelConfig, role: str, 
         color=label,
         color_discrete_map=color_map,
     )
-    fig.update_traces(textinfo="percent+label")
-    fig.update_layout(height=370, margin={"l": 20, "r": 20, "t": 60, "b": 20})
+    _apply_readable_pie_labels(fig, table, label, ton_col)
+    fig.update_layout(height=420)
     st.plotly_chart(fig, use_container_width=True)
 
 # Function: _plot_stacked_by_bench
@@ -3781,13 +4005,30 @@ def _active_year_scope_short_label() -> str:
 
 # Function: _metal_at_risk_display_unit
 # Support the metal at risk display unit workflow.
-def _metal_at_risk_display_unit(max_ounces: float) -> tuple[str, float, str]:
-    """Return a dynamic Au-ounce display unit for the selected period and filters."""
+def _metal_at_risk_display_unit(max_ounces: float, config: ModelConfig | None = None) -> tuple[str, float, str]:
+    """Return the configured Au display unit, with a dynamic legacy fallback."""
+    if config is not None:
+        unit, _ = _config_metal_unit_preferences(config)
+        divisor, decimals = _precious_metal_scale(unit)
+        return unit, divisor, f",.{decimals}f"
     if max_ounces >= 1_000_000:
         return "Moz", 1_000_000.0, ",.2f"
     if max_ounces >= 1_000:
-        return "Koz", 1_000.0, ",.0f"
+        return "koz", 1_000.0, ",.0f"
     return "oz", 1.0, ",.0f"
+
+
+def _metal_at_risk_scope_suffix(data: pd.DataFrame, config: ModelConfig) -> str:
+    """Show a time suffix only when a real, limited time scope is active."""
+    role = _active_time_role()
+    time_column = _time_column(config, data, role)
+    if not time_column or time_column not in data.columns:
+        return ""
+    mode = str(st.session_state.get("master_time_scope", "LOM" if role == "Year" else "All months"))
+    if mode in {"LOM", "All years", "All months", ""}:
+        return ""
+    label = _active_year_scope_short_label().strip()
+    return f" – {label}" if label else ""
 
 
 # Function: _plot_metal_at_risk_by_bench
@@ -3844,7 +4085,7 @@ def _plot_metal_at_risk_by_bench(data: pd.DataFrame, config: ModelConfig) -> Non
     # one aggregated total bar when the user selects long periods such as LOM or 10Y.
     bench_totals = table.groupby("Bench", observed=True)["Au oz"].sum()
     max_bench_ounces = float(bench_totals.max()) if not bench_totals.empty else 0.0
-    display_unit, display_divisor, text_format = _metal_at_risk_display_unit(max_bench_ounces)
+    display_unit, display_divisor, text_format = _metal_at_risk_display_unit(max_bench_ounces, config)
     table["Au display"] = table["Au oz"] / display_divisor
     total_ounces = float(table["Au oz"].sum())
     total_display_value = total_ounces / display_divisor if display_divisor else total_ounces
@@ -3889,7 +4130,7 @@ def _plot_metal_at_risk_by_bench(data: pd.DataFrame, config: ModelConfig) -> Non
     y_range = [0, max_stack_display * 1.18] if max_stack_display > 0 else None
 
     fig.update_layout(
-        title=f"Metal at Risk – {_active_year_scope_short_label()}",
+        title=f"Metal at Risk{_metal_at_risk_scope_suffix(data, config)}",
         barmode="stack",
         height=520,
         legend_title_text="Category",
@@ -5245,7 +5486,14 @@ def render_home() -> None:
 
 # Function: _reset_setup_mapping_widget_state
 # Clear model-mapping widgets when a new source tabulation is loaded.
-def _reset_setup_mapping_widget_state() -> None:
+def _reset_setup_mapping_widget_state(*, clear_identity: bool = True) -> None:
+    identity_keys = {
+        "setup_model_name",
+        "setup_model_type",
+        "setup_report_title",
+        "setup_precious_metal_unit",
+        "setup_copper_metal_unit",
+    }
     exact_keys = {
         "setup_mass_column",
         "setup_volume_column",
@@ -5270,7 +5518,7 @@ def _reset_setup_mapping_widget_state() -> None:
         "cat_role_",
     )
     for key in list(st.session_state.keys()):
-        if key in exact_keys or str(key).startswith(prefixes):
+        if key in exact_keys or (clear_identity and key in identity_keys) or str(key).startswith(prefixes):
             del st.session_state[key]
 
 
@@ -5349,6 +5597,9 @@ def _copy_setup_configuration_from_model(
         st.session_state.setup_grade_decimals = int(config.grade_decimals)
         st.session_state.setup_year_min = int(config.year_min)
         st.session_state.setup_year_max = int(config.year_max)
+        precious_unit, copper_unit = _config_metal_unit_preferences(config)
+        st.session_state.setup_precious_metal_unit = precious_unit
+        st.session_state.setup_copper_metal_unit = copper_unit
 
     return {
         "source": str(config.model_name or "Model"),
@@ -5366,13 +5617,14 @@ def render_setup() -> None:
     saved_notice = st.session_state.pop("setup_model_saved_notice", None)
     if saved_notice:
         saved_name = str(saved_notice.get("name", "Model"))
+        saved_action = str(saved_notice.get("action", "loaded"))
         if bool(saved_notice.get("blocked", False)):
             st.warning(
-                f"Model '{saved_name}' was loaded and listed below, but it has critical validation issues that require review."
+                f"Model '{saved_name}' was {saved_action} and listed below, but it has critical validation issues that require review."
             )
         else:
             st.success(
-                f"Model '{saved_name}' was loaded successfully and is ready for evaluation or comparison."
+                f"Model '{saved_name}' was {saved_action} successfully and is ready for evaluation or comparison."
             )
         st.caption("The upload control has been reset and is ready for the next model.")
 
@@ -5392,6 +5644,7 @@ def render_setup() -> None:
                 st.session_state.setup_raw = load_dataframe(uploaded.name, uploaded.getvalue())
                 st.session_state.setup_filename = signature
                 _reset_setup_mapping_widget_state()
+                st.session_state.pop("setup_edit_original_key", None)
                 st.session_state.pop("setup_copy_configuration_notice", None)
                 st.success(f"Loaded {uploaded.name}")
             except Exception as exc:
@@ -5423,7 +5676,8 @@ def render_setup() -> None:
 
     columns = list(frame.columns)
 
-    if st.session_state.models:
+    editing_model_key = st.session_state.get("setup_edit_original_key")
+    if st.session_state.models and not editing_model_key:
         st.markdown("#### Copy setup from existing model")
         copy_cols = st.columns([2.3, 1.0])
         source_model_keys = list(st.session_state.models)
@@ -5458,7 +5712,7 @@ def render_setup() -> None:
             use_container_width=True,
             disabled=not copy_requested,
         ):
-            _reset_setup_mapping_widget_state()
+            _reset_setup_mapping_widget_state(clear_identity=False)
             notice = _copy_setup_configuration_from_model(
                 st.session_state.models[copy_source],
                 columns,
@@ -5494,11 +5748,32 @@ def render_setup() -> None:
     _setup_step(2, "Map model variables", "Confirm identity, mass and volume fields, grades, categories, cleaning rules and display units.")
     with st.form("model_configuration"):
         st.markdown("#### Model identity")
-        identity = st.columns([1.1, 1.0, 1.7])
+        identity = st.columns([1.1, 1.0, 1.55, 0.8, 0.8])
         default_name = Path(str(st.session_state.setup_filename)).stem.replace("-", "_").replace(" ", "_")[:45]
-        model_name = identity[0].text_input("Model name", value=default_name)
-        model_type = identity[1].selectbox("Model type", MODEL_TYPES)
-        report_title = identity[2].text_input("Report title", value=model_name)
+        if "setup_model_name" not in st.session_state:
+            st.session_state.setup_model_name = default_name
+        if st.session_state.get("setup_model_type") not in MODEL_TYPES:
+            st.session_state.setup_model_type = MODEL_TYPES[0]
+        if "setup_report_title" not in st.session_state:
+            st.session_state.setup_report_title = str(st.session_state.setup_model_name)
+        if st.session_state.get("setup_precious_metal_unit") not in PRECIOUS_METAL_DISPLAY_UNITS:
+            st.session_state.setup_precious_metal_unit = "oz"
+        if st.session_state.get("setup_copper_metal_unit") not in COPPER_METAL_DISPLAY_UNITS:
+            st.session_state.setup_copper_metal_unit = "lb"
+
+        model_name = identity[0].text_input("Model name", key="setup_model_name")
+        model_type = identity[1].selectbox("Model type", MODEL_TYPES, key="setup_model_type")
+        report_title = identity[2].text_input("Report title", key="setup_report_title")
+        precious_metal_unit = identity[3].selectbox(
+            "Au / Ag metal unit",
+            PRECIOUS_METAL_DISPLAY_UNITS,
+            key="setup_precious_metal_unit",
+        )
+        copper_metal_unit = identity[4].selectbox(
+            "Cu metal unit",
+            COPPER_METAL_DISPLAY_UNITS,
+            key="setup_copper_metal_unit",
+        )
 
         st.markdown("#### Core variables")
         core = st.columns(4)
@@ -5627,12 +5902,16 @@ def render_setup() -> None:
         year_min = int(year_limits[0].number_input("Minimum valid year", key="setup_year_min", step=1, format="%d"))
         year_max = int(year_limits[1].number_input("Maximum valid year", key="setup_year_max", step=1, format="%d"))
 
-        _setup_step(3, "Validate and save", "Create the configured model in this workspace and make it available to Evaluation, Comparison and Reports.")
-        submitted = st.form_submit_button("Validate and save model", type="primary", use_container_width=True)
+        setup_action = "update" if editing_model_key else "save"
+        _setup_step(3, "Validate and save", "Revalidate the configured model and make it available to Evaluation, Comparison and Reports.")
+        submitted = st.form_submit_button(f"Validate and {setup_action} model", type="primary", use_container_width=True)
 
     if submitted:
         if not model_name.strip():
             st.error("Model name is required.")
+            return
+        if editing_model_key and model_name.strip() != editing_model_key and model_name.strip() in st.session_state.models:
+            st.error(f"A different configured model already uses the name '{model_name.strip()}'.")
             return
         if not grade_specs:
             st.warning("No grade variables were selected. The app can still validate mass/volume/category data.")
@@ -5656,19 +5935,36 @@ def render_setup() -> None:
         )
         data, stats = clean_model_data(frame, config)
         validation = validate_model(data, config)
-        st.session_state.models[model_name.strip()] = ModelBundle(
+        updated_bundle = ModelBundle(
             config=config,
             raw_data=frame.copy(),
             data=data,
             validation=validation,
             cleaning_stats=stats,
         )
+        if editing_model_key:
+            updated_models: dict[str, ModelBundle] = {}
+            for existing_key, existing_bundle in st.session_state.models.items():
+                if existing_key == editing_model_key:
+                    updated_models[model_name.strip()] = updated_bundle
+                else:
+                    updated_models[existing_key] = existing_bundle
+            st.session_state.models = updated_models
+            if editing_model_key != model_name.strip():
+                _replace_model_key_in_session_references(editing_model_key, model_name.strip())
+                st.session_state.setdefault("model_metal_display_units", {}).pop(editing_model_key, None)
+        else:
+            st.session_state.models[model_name.strip()] = updated_bundle
+        _set_model_metal_unit_preferences(model_name.strip(), precious_metal_unit, copper_metal_unit)
         st.session_state.setup_model_saved_notice = {
             "name": model_name.strip(),
             "blocked": bool(validation.is_blocked),
+            "action": "updated" if editing_model_key else "loaded",
         }
         st.session_state.setup_raw = None
         st.session_state.setup_filename = ""
+        st.session_state.pop("setup_edit_original_key", None)
+        _reset_setup_mapping_widget_state()
         st.session_state.setup_uploader_version = uploader_version + 1
         st.rerun()
 
@@ -6166,10 +6462,12 @@ def _sampling_kpi_chart(
     key_prefix: str,
 ) -> None:
     """Render stacked category percentages with contained Au ounces on Y2."""
+    precious_unit, _ = _config_metal_unit_preferences(config)
+    precious_divisor, precious_decimals = _precious_metal_scale(precious_unit)
     st.subheader("Sampling KPI")
     st.caption(
         "Bars show the Grade Control / Measured / Indicated distribution for the current Model Evaluation "
-        "scope. Gold ounces use the same records and are plotted on the secondary vertical axis."
+        f"scope. Gold content ({precious_unit}) uses the same records and is plotted on the secondary vertical axis."
     )
 
     if data.empty:
@@ -6236,7 +6534,7 @@ def _sampling_kpi_chart(
     )
     y2_title = axis_cols[2].text_input(
         "Secondary Y-axis title",
-        value="Gold Ounces",
+        value=f"Gold ({precious_unit})",
         key=f"{key_prefix}_sampling_y2_title",
     )
 
@@ -6319,7 +6617,7 @@ def _sampling_kpi_chart(
         metal = contained_metal(group[au_spec.column], group[config.mass_column], au_unit)
         ounces = float(metal[0]) if metal and metal[1] == "oz" else 0.0
         row = {column: value for column, value in zip(group_cols, keys, strict=True)}
-        row["Au oz"] = ounces
+        row["Au display"] = ounces / precious_divisor
         au_rows.append(row)
     au_table = pd.DataFrame(au_rows)
 
@@ -6403,8 +6701,8 @@ def _sampling_kpi_chart(
     fig.add_trace(
         go.Scatter(
             x=trace_x(au_ids),
-            y=au_table["Au oz"],
-            name="Au Oz",
+            y=au_table["Au display"],
+            name=f"Au {precious_unit}",
             mode="lines+markers",
             line={"color": SAMPLING_KPI_AU_COLOR, "width": 4},
             marker={
@@ -6412,7 +6710,7 @@ def _sampling_kpi_chart(
                 "size": 8,
                 "line": {"color": SAMPLING_KPI_AU_COLOR, "width": 1},
             },
-            hovertemplate="Au Oz: %{y:,.0f}<extra></extra>",
+            hovertemplate=f"Au {precious_unit}: %{{y:,.{precious_decimals}f}}<extra></extra>",
         ),
         secondary_y=True,
     )
@@ -6630,9 +6928,8 @@ def _resource_conversion_figure(table: pd.DataFrame, title: str, basis: str) -> 
                 })
             cumulative[model_index] += percentage
 
-    # Model labels follow the left end of each ring. The first selected model
-    # is deliberately the outer ring, matching the chronological layout of the
-    # supplied example (oldest outside, newest inside when loaded in that order).
+    # Model labels follow the left end of each ring. The first model in the
+    # user-configured comparison order is deliberately the outer ring.
     annotations: list[dict[str, Any]] = percentage_annotations.copy()
     for model_index, (_, row) in enumerate(table.iterrows()):
         radial_midpoint = inner_radius + (model_count - model_index - 1) * ring_pitch + ring_width / 2.0
@@ -6960,23 +7257,27 @@ def _five_year_ounce_matrix(
 # Function: _format_ounce_table_value
 # Format ounce values as whole numbers and preserve accounting-style
 # parentheses for negative differences.
-def _format_ounce_table_value(value: Any) -> str:
+def _format_ounce_table_value(value: Any, decimals: int = 0) -> str:
     if value is None or pd.isna(value):
         return "-"
     numeric = float(value)
-    rounded = int(round(abs(numeric)))
-    return f"({rounded:,})" if numeric < 0 else f"{rounded:,}"
+    absolute = abs(numeric)
+    formatted = f"{absolute:,.{decimals}f}"
+    return f"({formatted})" if numeric < 0 else formatted
 
 
 # Function: _ore_ounce_table_style
 # Style five-year Au/Ag matrices with centered headers/cells and red negative
 # text while retaining parentheses and the Grand Total highlight.
-def _ore_ounce_table_style(matrix: pd.DataFrame) -> pd.io.formats.style.Styler:
+def _ore_ounce_table_style(matrix: pd.DataFrame, decimals: int = 0) -> pd.io.formats.style.Styler:
     # Reset the index so Year becomes a visible column and can share the same
     # centering rules as every destination/content column.
     display = matrix.reset_index()
     numeric_columns = [column for column in display.columns if column != "Year"]
-    formatters = {column: _format_ounce_table_value for column in numeric_columns}
+    formatters = {
+        column: (lambda value, places=decimals: _format_ounce_table_value(value, places))
+        for column in numeric_columns
+    }
 
     def negative_text_style(column: pd.Series) -> list[str]:
         """Return red text for negative values while preserving parentheses."""
@@ -7038,10 +7339,10 @@ def _ore_ounce_table_style(matrix: pd.DataFrame) -> pd.io.formats.style.Styler:
 
 # Function: _render_ore_ounce_matrix
 # Render the ore ounce matrix interface section.
-def _render_ore_ounce_matrix(title: str, matrix: pd.DataFrame) -> None:
+def _render_ore_ounce_matrix(title: str, matrix: pd.DataFrame, decimals: int = 0) -> None:
     st.markdown(f"*{title}*")
     st.dataframe(
-        _ore_ounce_table_style(matrix),
+        _ore_ounce_table_style(matrix, decimals),
         use_container_width=True,
         hide_index=True,
     )
@@ -7064,6 +7365,58 @@ def _stable_comparison_multiselect(
     return st.multiselect(label, options, key=key, help=help_text)
 
 
+def _comparison_model_order_selector(
+    selected_model_names: list[str],
+    display_names: dict[str, str],
+) -> list[str]:
+    """Let the user reorder selected models independently of upload order."""
+    order_key = "comparison_model_display_order"
+    saved_order = [
+        name for name in st.session_state.get(order_key, [])
+        if name in selected_model_names
+    ]
+    for name in selected_model_names:
+        if name not in saved_order:
+            saved_order.append(name)
+    st.session_state[order_key] = saved_order
+
+    st.markdown("#### Model display order")
+    st.caption(
+        "This order controls the model columns in the vertical comparison table and the rings in Resource "
+        "Convertion. The first model is the leftmost table column and the outer ring."
+    )
+    controls = st.columns([2.4, 0.8, 0.8, 0.9])
+    move_key = "comparison_model_to_reorder"
+    if st.session_state.get(move_key) not in saved_order:
+        st.session_state[move_key] = saved_order[0]
+    model_to_move = controls[0].selectbox(
+        "Model to move",
+        saved_order,
+        key=move_key,
+        format_func=lambda key: display_names.get(key, key),
+    )
+
+    move_index = saved_order.index(model_to_move)
+    if controls[1].button("Move up", disabled=move_index == 0, use_container_width=True):
+        saved_order[move_index - 1], saved_order[move_index] = saved_order[move_index], saved_order[move_index - 1]
+        st.session_state[order_key] = saved_order
+        st.rerun()
+    if controls[2].button("Move down", disabled=move_index == len(saved_order) - 1, use_container_width=True):
+        saved_order[move_index + 1], saved_order[move_index] = saved_order[move_index], saved_order[move_index + 1]
+        st.session_state[order_key] = saved_order
+        st.rerun()
+    if controls[3].button("Reverse", use_container_width=True):
+        st.session_state[order_key] = list(reversed(saved_order))
+        st.rerun()
+
+    ordered_labels = "  →  ".join(
+        f"{index}. {display_names.get(name, name)}"
+        for index, name in enumerate(saved_order, start=1)
+    )
+    st.info(f"Current order: {ordered_labels}")
+    return saved_order
+
+
 # Function: _render_five_year_ore_comparison
 # Render the independent five-year Au/Ag workflow. Its local controls
 # intentionally do not inherit the master time, phase or destination filters.
@@ -7082,6 +7435,10 @@ def _render_five_year_ore_comparison(
         st.info("Select at least two models to activate the five-year Au/Ag content and difference tables.")
         return
 
+    first_model_name = selected_model_names[0]
+    precious_unit, _ = _config_metal_unit_preferences(raw_bundles[first_model_name].config)
+    precious_divisor, precious_decimals = _precious_metal_scale(precious_unit)
+
     display_names = _model_display_names(raw_bundles)
     reference_key = "five_year_ore_reference_model"
     if st.session_state.get(reference_key) not in selected_model_names:
@@ -7094,7 +7451,7 @@ def _render_five_year_ore_comparison(
             selected_model_names,
             key=reference_key,
             format_func=lambda key: display_names.get(key, key),
-            help="Difference = comparison model minus reference model, reported in ounces.",
+            help=f"Difference = comparison model minus reference model, reported in {precious_unit}.",
         )
 
     start_year_key = "five_year_ore_start_year"
@@ -7167,14 +7524,14 @@ def _render_five_year_ore_comparison(
             if matrix is None:
                 errors.append(f"{display_names.get(model_name, model_name)} / {metal_label}: {error}")
             else:
-                tables[metal_label][model_name] = matrix
+                tables[metal_label][model_name] = matrix / precious_divisor
 
     if errors:
         with st.expander("Unavailable model/metal combinations", expanded=False):
             for error in errors:
                 st.warning(error)
 
-    metal_tabs = st.tabs(["Au (oz)", "Ag (oz)"])
+    metal_tabs = st.tabs([f"Au ({precious_unit})", f"Ag ({precious_unit})"])
     for metal_tab, metal_label in zip(metal_tabs, ["Au", "Ag"], strict=True):
         with metal_tab:
             metal_tables = tables[metal_label]
@@ -7188,8 +7545,9 @@ def _render_five_year_ore_comparison(
             for content_tab, model_name in zip(content_tabs, available_models, strict=True):
                 with content_tab:
                     _render_ore_ounce_matrix(
-                        f"{metal_label} content by ore destination — {display_names.get(model_name, model_name)}",
+                        f"{metal_label} content ({precious_unit}) by ore destination — {display_names.get(model_name, model_name)}",
                         metal_tables[model_name],
+                        precious_decimals,
                     )
 
             if reference_model not in metal_tables:
@@ -7201,7 +7559,7 @@ def _render_five_year_ore_comparison(
 
             comparison_models = [name for name in available_models if name != reference_model]
             st.markdown(f"#### Differences versus {display_names.get(reference_model, reference_model)}")
-            st.caption("Absolute difference in ounces: comparison model − reference model.")
+            st.caption(f"Absolute difference in {precious_unit}: comparison model − reference model.")
             if not comparison_models:
                 st.info("No additional model with a valid table is available for this difference calculation.")
                 continue
@@ -7215,8 +7573,9 @@ def _render_five_year_ore_comparison(
                 with difference_tab:
                     difference = metal_tables[model_name].subtract(reference_table, fill_value=0.0)
                     _render_ore_ounce_matrix(
-                        f"Ore difference ({metal_label} oz): {display_names.get(model_name, model_name)} − {display_names.get(reference_model, reference_model)}",
+                        f"Ore difference ({metal_label} {precious_unit}): {display_names.get(model_name, model_name)} − {display_names.get(reference_model, reference_model)}",
                         difference,
+                        precious_decimals,
                     )
 
 # Function: render_comparison
@@ -7285,6 +7644,8 @@ def render_comparison() -> None:
             "remain disabled until two or more models are selected."
         )
         return
+
+    selected = _comparison_model_order_selector(selected, workspace_display_names)
 
     selected_raw_bundle_map = {name: st.session_state.models[name] for name in selected}
     selected_raw_bundles = list(selected_raw_bundle_map.values())
@@ -7503,11 +7864,19 @@ def _five_year_report_items(raw_bundles: dict[str, ModelBundle]) -> list[dict[st
     else:
         selected_names = available_names[:2]
 
+    saved_order = [
+        name for name in st.session_state.get("comparison_model_display_order", [])
+        if name in selected_names
+    ]
+    selected_names = saved_order + [name for name in selected_names if name not in saved_order]
+
     # Respect an explicit comparison selection with fewer than two models.
     if len(selected_names) < 2:
         return []
 
     selected_bundles = {name: raw_bundles[name] for name in selected_names}
+    precious_unit, _ = _config_metal_unit_preferences(selected_bundles[selected_names[0]].config)
+    precious_divisor, precious_decimals = _precious_metal_scale(precious_unit)
 
     reference_model = st.session_state.get("five_year_ore_reference_model", selected_names[0])
     if reference_model not in selected_names:
@@ -7565,10 +7934,11 @@ def _five_year_report_items(raw_bundles: dict[str, ModelBundle]) -> list[dict[st
             if matrix is None:
                 unavailable.append(f"{model_name} / {metal_label}: {error}")
             else:
-                matrices[metal_label][model_name] = matrix
+                matrices[metal_label][model_name] = matrix / precious_divisor
 
     items: list[dict[str, Any]] = []
-    ounce_format = "#,##0;[Red](#,##0)"
+    decimal_pattern = "." + ("0" * precious_decimals) if precious_decimals else ""
+    ounce_format = f"#,##0{decimal_pattern};[Red](#,##0{decimal_pattern})"
     category = "Model Comparison - 5-Year Au/Ag"
 
     for metal_label in ["Au", "Ag"]:
@@ -7579,13 +7949,13 @@ def _five_year_report_items(raw_bundles: dict[str, ModelBundle]) -> list[dict[st
                 continue
             notes = [
                 *base_notes,
-                f"Table type: {metal_label} contained ounces by model and ore destination.",
+                f"Table type: {metal_label} contained metal ({precious_unit}) by model and ore destination.",
             ]
             if unavailable:
                 notes.append("Unavailable combinations: " + " | ".join(unavailable))
             items.append(
                 _report_table_item(
-                    f"5-Year {metal_label} Content (oz) - {model_name}",
+                    f"5-Year {metal_label} Content ({precious_unit}) - {model_name}",
                     _five_year_report_dataframe(matrix),
                     notes,
                     category,
@@ -7603,13 +7973,13 @@ def _five_year_report_items(raw_bundles: dict[str, ModelBundle]) -> list[dict[st
             difference = metal_tables[model_name].subtract(reference_table, fill_value=0.0)
             notes = [
                 *base_notes,
-                f"Difference formula: {model_name} minus {reference_model}, reported in {metal_label} ounces.",
+                f"Difference formula: {model_name} minus {reference_model}, reported in {metal_label} {precious_unit}.",
             ]
             if unavailable:
                 notes.append("Unavailable combinations: " + " | ".join(unavailable))
             items.append(
                 _report_table_item(
-                    f"5-Year {metal_label} Difference (oz) - {model_name} vs {reference_model}",
+                    f"5-Year {metal_label} Difference ({precious_unit}) - {model_name} vs {reference_model}",
                     _five_year_report_dataframe(difference),
                     notes,
                     category,
@@ -7669,16 +8039,22 @@ def _automatic_report_tables(scoped_bundles: dict[str, ModelBundle]) -> list[dic
 
     if len(scoped_bundles) >= 2:
         selected_names = list(scoped_bundles.keys())
+        saved_order = [
+            name for name in st.session_state.get("comparison_model_display_order", [])
+            if name in selected_names
+        ]
+        selected_names = saved_order + [name for name in selected_names if name not in saved_order]
+        ordered_scoped_bundles = {name: scoped_bundles[name] for name in selected_names}
         reference_model = st.session_state.get("comparison_destination_reference_model", selected_names[0])
         if reference_model not in selected_names:
             reference_model = selected_names[0]
-        comp_destination = _destination_comparison_table(scoped_bundles, reference_model).drop(columns=["__row_type__"], errors="ignore")
+        comp_destination = _destination_comparison_table(ordered_scoped_bundles, reference_model).drop(columns=["__row_type__"], errors="ignore")
         if not comp_destination.empty:
             items.append(_report_table_item(
                 "Model Comparison - Tabulation by Destination",
                 comp_destination,
                 _comparison_filter_note_items(
-                    scoped_bundles,
+                    ordered_scoped_bundles,
                     selected_names,
                     reference_model,
                     extra_items=["Vertical comparison table by model, including relative differences against the selected reference model."],
@@ -7688,7 +8064,7 @@ def _automatic_report_tables(scoped_bundles: dict[str, ModelBundle]) -> list[dic
 
         raw_bundles = {
             name: st.session_state.models.get(name, scoped_bundles[name])
-            for name in scoped_bundles
+            for name in selected_names
         }
         items.extend(_five_year_report_items(raw_bundles))
 
@@ -8344,7 +8720,7 @@ def _metal_at_risk_chart_png(data: pd.DataFrame, config: ModelConfig, model_name
         return None
     table = pd.DataFrame(rows)
     max_oz = float(table.groupby("Bench")["Au oz"].sum().max())
-    unit, divisor, _ = _metal_at_risk_display_unit(max_oz)
+    unit, divisor, _ = _metal_at_risk_display_unit(max_oz, config)
     table[f"Au ({unit})"] = table["Au oz"] / divisor
     pivot = table.pivot_table(index="Bench", columns="Category", values=f"Au ({unit})", aggfunc="sum", fill_value=0)
     try:
@@ -8353,7 +8729,8 @@ def _metal_at_risk_chart_png(data: pd.DataFrame, config: ModelConfig, model_name
     except Exception:
         pivot = pivot.sort_index(ascending=False)
     colors = ["#485B73", "#A39161", "#BFC3C8"]
-    return _plot_png_from_pivot(pivot, f"Metal at Risk - {_active_year_scope_short_label()} - {model_name}", f"Au ({unit})", colors, stacked=True)
+    scope_suffix = _metal_at_risk_scope_suffix(data, config).replace(" – ", " - ")
+    return _plot_png_from_pivot(pivot, f"Metal at Risk{scope_suffix} - {model_name}", f"Au ({unit})", colors, stacked=True)
 
 
 # Function: _comparison_ore_phase_chart_png
@@ -8456,12 +8833,11 @@ def _role_pie_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, mode
         fig, ax = plt.subplots(figsize=(8.8, 4.8))
         wedges, texts, autotexts = ax.pie(
             values,
-            labels=labels,
+            labels=None,
             colors=plot_colors,
-            autopct=lambda pct: f"{pct:.0f}%" if pct >= 2 else "",
+            autopct=lambda pct: f"{pct:.0f}%" if pct >= 3 else "",
             startangle=90,
             pctdistance=0.75,
-            labeldistance=1.08,
             textprops={"fontsize": 13.5, "color": "#26323A"},
             wedgeprops={"linewidth": 0.8, "edgecolor": "white"},
         )
@@ -8472,6 +8848,14 @@ def _role_pie_chart_png(data: pd.DataFrame, config: ModelConfig, role: str, mode
         centre = plt.Circle((0, 0), 0.55, fc="white")
         ax.add_artist(centre)
         ax.set_title(chart_title, fontsize=21, fontweight="bold", color="#202A36", pad=14)
+        ax.legend(
+            wedges,
+            labels,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            fontsize=11.5,
+        )
         ax.axis("equal")
         fig.tight_layout()
         output = io.BytesIO()
