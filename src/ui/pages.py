@@ -49,6 +49,7 @@ from __future__ import annotations
 import base64
 import html
 import io
+import math
 import re
 import uuid
 from datetime import datetime
@@ -1134,6 +1135,16 @@ SAMPLING_KPI_COLORS = {
     "Indicated": "#03547C",  # RGB(3, 84, 124) - corporate blue
 }
 SAMPLING_KPI_AU_COLOR = "#A6C63B"
+
+# Resource Convertion uses the three confidence classes shown in the supplied
+# concentric-semicircle reference.  Keep this palette independent from the
+# standard resource-tabulation colors so the comparison view matches the
+# requested dark slate / corporate gold / neutral gray treatment.
+RESOURCE_CONVERSION_COLORS = {
+    "Grade Control": "#44546A",
+    "Measured": "#A39161",
+    "Indicated": "#A5A5A5",
+}
 
 DESTINATION_COLORS = {
     "H1": "#B30000",
@@ -6465,6 +6476,292 @@ def _sampling_kpi_chart(
     )
 
 
+# =============================================================================
+# RESOURCE CONVERTION - MULTI-MODEL CATEGORY CONFIDENCE
+# =============================================================================
+def _resource_conversion_table(
+    bundles: dict[str, ModelBundle],
+    selected: list[str],
+    basis: str,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Calculate Grade Control / Measured / Indicated shares for each model."""
+    category_order = ["Grade Control", "Measured", "Indicated"]
+    rows: list[dict[str, Any]] = []
+    unavailable: list[str] = []
+
+    for model_name in selected:
+        bundle = bundles[model_name]
+        config = bundle.config
+        data = bundle.data
+        display_name = _configured_model_name(bundle, model_name)
+
+        category_col = config.column_for_role("Category")
+        if not category_col or category_col not in data.columns:
+            unavailable.append(f"{display_name}: Category variable is not configured")
+            continue
+
+        if basis == "Volume":
+            value_col = config.volume_column
+        else:
+            value_col = config.mass_column
+
+        if not value_col or value_col not in data.columns:
+            unavailable.append(f"{display_name}: {basis.lower()} variable is not configured")
+            continue
+
+        work = pd.DataFrame({
+            "Category": data[category_col].map(_display_resource_category),
+            "Basis": pd.to_numeric(data[value_col], errors="coerce").fillna(0.0).clip(lower=0),
+        })
+        work = work[work["Category"].isin(category_order)]
+        totals = work.groupby("Category", observed=True)["Basis"].sum().reindex(category_order, fill_value=0.0)
+        comparison_total = float(totals.sum())
+
+        if comparison_total <= 0:
+            unavailable.append(f"{display_name}: no positive {basis.lower()} in the three comparison categories")
+            continue
+
+        row: dict[str, Any] = {
+            "Model key": model_name,
+            "Model": display_name,
+            f"Compared {basis}": comparison_total,
+        }
+        for category in category_order:
+            row[category] = float(totals.loc[category])
+            row[f"{category} (%)"] = 100.0 * float(totals.loc[category]) / comparison_total
+        rows.append(row)
+
+    return pd.DataFrame(rows), unavailable
+
+
+def _resource_conversion_figure(table: pd.DataFrame, title: str, basis: str) -> go.Figure:
+    """Build concentric upper-half rings, one ring per selected model.
+
+    The rings use filled Cartesian polygons instead of a polar-bar trace so
+    the chart remains compatible with older Plotly versions used by some local
+    Streamlit environments.
+    """
+    category_order = ["Grade Control", "Measured", "Indicated"]
+    model_count = len(table)
+    inner_radius = 0.52
+    ring_pitch = 1.0
+    ring_width = 0.84
+    max_radius = inner_radius + model_count * ring_pitch
+    cumulative = [0.0] * model_count
+    percentage_annotations: list[dict[str, Any]] = []
+
+    fig = go.Figure()
+    for category in category_order:
+        for model_index, (_, row) in enumerate(table.iterrows()):
+            percentage = float(row[f"{category} (%)"])
+            start_angle = 180.0 - cumulative[model_index] * 1.8
+            end_angle = 180.0 - (cumulative[model_index] + percentage) * 1.8
+            theta_center = (start_angle + end_angle) / 2.0
+            inner_segment_radius = inner_radius + (model_count - model_index - 1) * ring_pitch
+            outer_segment_radius = inner_segment_radius + ring_width
+
+            # Approximate each annular sector with a smooth closed polygon.
+            # A point every ~2 degrees keeps the curve visually smooth while
+            # avoiding any trace properties specific to Barpolar.
+            point_count = max(2, int(abs(start_angle - end_angle) / 2.0) + 1)
+            if point_count == 2:
+                angles = [start_angle, end_angle]
+            else:
+                angle_step = (end_angle - start_angle) / (point_count - 1)
+                angles = [start_angle + point_index * angle_step for point_index in range(point_count)]
+
+            outer_x = [outer_segment_radius * math.cos(math.radians(angle)) for angle in angles]
+            outer_y = [outer_segment_radius * math.sin(math.radians(angle)) for angle in angles]
+            inner_x = [inner_segment_radius * math.cos(math.radians(angle)) for angle in reversed(angles)]
+            inner_y = [inner_segment_radius * math.sin(math.radians(angle)) for angle in reversed(angles)]
+
+            hover_text = (
+                f"Model: {html.escape(str(row['Model']))}<br>"
+                f"Category: {category}<br>"
+                f"Share: {percentage:.1f}%<br>"
+                f"{basis}: {float(row[category]):,.0f}<br>"
+                f"Compared {basis}: {float(row[f'Compared {basis}']):,.0f}"
+            )
+
+            fig.add_trace(
+                go.Scatter(
+                    x=outer_x + inner_x,
+                    y=outer_y + inner_y,
+                    mode="lines",
+                    fill="toself",
+                    fillcolor=RESOURCE_CONVERSION_COLORS[category],
+                    line={"color": "#FFFFFF", "width": 2.0},
+                    name=category,
+                    legendgroup=category,
+                    showlegend=model_index == 0,
+                    hoverinfo="skip",
+                )
+            )
+
+            # A transparent point at the segment midpoint preserves the
+            # interactive tooltip without relying on polar-trace features.
+            radial_midpoint = (inner_segment_radius + outer_segment_radius) / 2.0
+            theta_radians = math.radians(theta_center)
+            midpoint_x = radial_midpoint * math.cos(theta_radians)
+            midpoint_y = radial_midpoint * math.sin(theta_radians)
+            fig.add_trace(
+                go.Scatter(
+                    x=[midpoint_x],
+                    y=[midpoint_y],
+                    mode="markers",
+                    marker={"size": 28, "color": "rgba(0,0,0,0.01)"},
+                    text=[hover_text],
+                    hoverinfo="text",
+                    showlegend=False,
+                )
+            )
+
+            if percentage >= 4.0:
+                percentage_annotations.append({
+                    "x": midpoint_x,
+                    "y": midpoint_y,
+                    "xref": "x",
+                    "yref": "y",
+                    "text": f"{percentage:.0f}%",
+                    "showarrow": False,
+                    "xanchor": "center",
+                    "yanchor": "middle",
+                    "font": {"color": "#FFFFFF", "size": 14},
+                })
+            cumulative[model_index] += percentage
+
+    # Model labels follow the left end of each ring. The first selected model
+    # is deliberately the outer ring, matching the chronological layout of the
+    # supplied example (oldest outside, newest inside when loaded in that order).
+    annotations: list[dict[str, Any]] = percentage_annotations.copy()
+    for model_index, (_, row) in enumerate(table.iterrows()):
+        radial_midpoint = inner_radius + (model_count - model_index - 1) * ring_pitch + ring_width / 2.0
+        annotations.append({
+            "x": -radial_midpoint,
+            "y": -0.035 * max_radius,
+            "xref": "x",
+            "yref": "y",
+            "text": str(row["Model"]),
+            "showarrow": False,
+            "textangle": -90,
+            "xanchor": "center",
+            "yanchor": "top",
+            "font": {"size": 12, "color": "#111111"},
+        })
+
+    fig.update_layout(
+        title={
+            "text": title,
+            "x": 0.5,
+            "xanchor": "center",
+            "font": {"size": 22, "color": "#4D4D4D"},
+        },
+        height=650,
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
+        xaxis={
+            "domain": [0.03, 0.80],
+            "range": [-1.14 * max_radius, 1.14 * max_radius],
+            "visible": False,
+            "fixedrange": True,
+        },
+        yaxis={
+            "domain": [0.08, 0.90],
+            "range": [-0.20 * max_radius, 1.16 * max_radius],
+            "visible": False,
+            "fixedrange": True,
+            "scaleanchor": "x",
+            "scaleratio": 1,
+        },
+        hovermode="closest",
+        legend={
+            "orientation": "v",
+            "x": 0.84,
+            "y": 0.82,
+            "xanchor": "left",
+            "yanchor": "top",
+            "title": None,
+            "font": {"size": 13},
+        },
+        margin={"l": 30, "r": 30, "t": 95, "b": 150},
+        annotations=annotations,
+    )
+    return fig
+
+
+def _render_resource_conversion(
+    bundles: dict[str, ModelBundle],
+    selected: list[str],
+) -> None:
+    """Render the multi-model Resource Convertion comparison tab."""
+    st.subheader("Resource Convertion")
+    st.caption(
+        "Each concentric ring represents one selected model. Percentages compare Grade Control, Measured and "
+        "Indicated within the active master scope; the first selected model is the outer ring."
+    )
+
+    volume_available = all(
+        bundle.config.volume_column and bundle.config.volume_column in bundle.data.columns
+        for bundle in bundles.values()
+    )
+    tonnage_available = all(
+        bundle.config.mass_column and bundle.config.mass_column in bundle.data.columns
+        for bundle in bundles.values()
+    )
+    basis_options = (["Volume"] if volume_available else []) + (["Tonnage"] if tonnage_available else [])
+    if not basis_options:
+        st.info("A common configured Volume or Tonnage variable is required across the selected models.")
+        return
+
+    control_cols = st.columns([1.0, 2.2])
+    basis = control_cols[0].selectbox(
+        "Comparison basis",
+        basis_options,
+        key="comparison_resource_conversion_basis",
+        help="Percentages are calculated independently within each model using the selected additive basis.",
+    )
+    default_title = f"Resource Convertion by Model - {_master_destination_label()}"
+    title = control_cols[1].text_input(
+        "Chart title",
+        value=default_title,
+        key="comparison_resource_conversion_title",
+    )
+
+    table, unavailable = _resource_conversion_table(bundles, selected, basis)
+    if unavailable:
+        st.warning("Some selected models could not be plotted: " + "; ".join(unavailable) + ".")
+    if len(table) < 2:
+        st.info("At least two selected models with comparable category data are required for this plot.")
+        return
+
+    st.plotly_chart(_resource_conversion_figure(table, title, basis), use_container_width=True)
+    st.caption(
+        f"Basis: {basis}. Destination / Ore Type: {_master_destination_label()}. "
+        "Only Grade Control, Measured and Indicated are included in the 100% denominator."
+    )
+
+    with st.expander("Resource Convertion values", expanded=False):
+        display_columns = [
+            "Model",
+            "Grade Control (%)",
+            "Measured (%)",
+            "Indicated (%)",
+            f"Compared {basis}",
+        ]
+        display_table = table[display_columns].copy()
+        formatters = {
+            "Grade Control (%)": lambda value: f"{float(value):.1f}%",
+            "Measured (%)": lambda value: f"{float(value):.1f}%",
+            "Indicated (%)": lambda value: f"{float(value):.1f}%",
+            f"Compared {basis}": lambda value: f"{float(value):,.0f}",
+        }
+        st.dataframe(
+            _centered_table_style(display_table, formatters=formatters, na_rep="N/A"),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
 # Function: render_evaluation
 # Render single-model validation and resource-tabulation workflows.
 def render_evaluation() -> None:
@@ -7018,6 +7315,7 @@ def render_comparison() -> None:
         "Global volume check",
         "Tabulation by Destination",
         "5-Year Au & Ag by Destination",
+        "Resource Convertion",
     ])
 
     with tabs[0]:
@@ -7089,6 +7387,15 @@ def render_comparison() -> None:
             )
         else:
             _render_five_year_ore_comparison(selected_raw_bundle_map, selected)
+
+    with tabs[3]:
+        if not passed and not accept_override:
+            st.info(
+                "Resource Convertion is locked until the global-volume check passes or you explicitly accept "
+                "the override."
+            )
+        else:
+            _render_resource_conversion(bundles, selected)
 
 
 # -----------------------------------------------------------------------------
