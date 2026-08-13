@@ -1145,23 +1145,23 @@ METTYPE_COLORS = {
     # Corporate Block Model Mettype palette.
     # The Mettype plotting helpers convert values to uppercase before plotting.
     "NONE": "#FFFFFF",
-    "MNSP": "#9ACD32",
-    "MOVC": "#1B5E20",
+    "MNSP": "#3C7D22",
+    "MOVC": "#3C7D22",
     "DEF": "#0057D9",
-    "MOBS": "#4D4D4D",
-    "MNVC": "#43A047",
-    "MNBS": "#B0B0B0",
+    "MOBS": "#A6A6A6",
+    "MNVC": "#3C7D22",
+    "MNBS": "#808080",
     # Requested alphanumeric Mettype labels used in Model Evaluation charts.
-    "1 - mobs": "#4D4D4D",
-    "2 - movc": "#1B5E20",
-    "4 - mnbs": "#B0B0B0",
-    "5 - mnvc": "#43A047",
-    "6 - mnsp": "#9ACD32",
+    "1 - mobs": "#A6A6A6",
+    "2 - movc": "#3C7D22",
+    "4 - mnbs": "#808080",
+    "5 - mnvc": "#3C7D22",
+    "6 - mnsp": "#3C7D22",
     # Legacy aliases kept for compatibility with older model files.
-    "VCL": "#43A047",
-    "VOLCANIC": "#43A047",
-    "BSD": "#4D4D4D",
-    "BLACK SEDIMENT": "#4D4D4D",
+    "VCL": "#3C7D22",
+    "VOLCANIC": "#3C7D22",
+    "BSD": "#A6A6A6",
+    "BLACK SEDIMENT": "#A6A6A6",
 }
 
 METTYPE_DISPLAY_LABELS = {
