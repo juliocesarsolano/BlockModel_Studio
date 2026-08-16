@@ -122,6 +122,7 @@ from src.ui.pages import (  # noqa: E402
     render_reports,
     render_setup,
 )
+from src.ui.rescat_stability import render_rescat_stability  # noqa: E402
 
 
 # =============================================================================
@@ -167,6 +168,7 @@ PAGES = {
     "Model Description": render_quality,
     "Model Evaluation": render_evaluation,
     "Model Comparison": render_comparison,
+    "ResCat Stability": render_rescat_stability,
     "Report Builder": render_reports,
     "About": render_about,
 }

@@ -55,6 +55,10 @@ def initialize_state() -> None:
 
 def render_master_scope_sidebar() -> None:
     """Global app scope applied to calculations, tables and plots."""
+    # ResCat Stability uses independent undepleted model snapshots and therefore
+    # must not inherit the application-wide BLK_MODEL source selector.
+    if st.session_state.get("nav_page") == "ResCat Stability":
+        return
     st.sidebar.markdown(
         """
         <div class="bm-side-banner">

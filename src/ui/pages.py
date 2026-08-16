@@ -4923,10 +4923,10 @@ def _render_grade_distribution_multiplot(data: pd.DataFrame, config: ModelConfig
                 x=values,
                 nbinsx=35,
                 marker={
-                    "color": "#0068C9",
+                    "color": "#03547C",
                     "line": {"color": "#FFFFFF", "width": 1.2},
                 },
-                hovertemplate=f"{column}<br>Value: %{{x}}<br>Count: %{{y}}<extra></extra>",
+                hovertemplate=f"{column}<br>Value: %{{x:.2f}}<br>Count: %{{y:,.0f}}<extra></extra>",
                 showlegend=False,
             ),
             row=row,
@@ -7991,13 +7991,576 @@ def _five_year_report_items(raw_bundles: dict[str, ModelBundle]) -> list[dict[st
     return items
 
 
+# -----------------------------------------------------------------------------
+# ResCat Stability automatic-report integration
+# -----------------------------------------------------------------------------
+_RESCAT_REPORT_COLORS = {
+    "Grade Control": "#FDB813",
+    "Measured": "#03547C",
+    "Indicated": "#A39161",
+    "Inferred": "#C7C8CA",
+}
+_RESCAT_BLUE = "#03547C"
+_RESCAT_GOLD = "#A39161"
+_RESCAT_ORANGE = "#FDB813"
+_RESCAT_GRAY = "#C7C8CA"
+
+
+def _rescat_report_package() -> dict[str, Any]:
+    package = st.session_state.get("rescat_report_package", {})
+    if not isinstance(package, dict) or package.get("module") != "ResCat Stability":
+        return {}
+    return package
+
+
+def _rescat_report_tables() -> list[dict[str, Any]]:
+    package = _rescat_report_package()
+    if not package:
+        return []
+    items: list[dict[str, Any]] = []
+    for item in package.get("tables", []):
+        if not isinstance(item, dict):
+            continue
+        table = item.get("table")
+        if not isinstance(table, pd.DataFrame) or table.empty:
+            continue
+        items.append(
+            _report_table_item(
+                str(item.get("title") or "ResCat Stability"),
+                table,
+                [str(note) for note in (item.get("notes") or [])],
+                "ResCat Stability",
+            )
+        )
+    return items
+
+
+def _rescat_save_figure(fig) -> bytes | None:
+    try:
+        output = io.BytesIO()
+        fig.savefig(output, format="png", dpi=195, bbox_inches="tight", facecolor="white")
+        output.seek(0)
+        return output.getvalue()
+    except Exception:
+        return None
+    finally:
+        try:
+            import matplotlib.pyplot as plt
+            plt.close(fig)
+        except Exception:
+            pass
+
+
+def _rescat_category_evolution_png(evolution: pd.DataFrame) -> bytes | None:
+    if not isinstance(evolution, pd.DataFrame) or evolution.empty:
+        return None
+    required = {"Snapshot", "Category", "Volume (%)"}
+    if not required.issubset(evolution.columns):
+        return None
+    try:
+        import matplotlib
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+
+        order = ["Grade Control", "Measured", "Indicated", "Inferred"]
+        pivot = (
+            evolution[evolution["Category"].isin(order)]
+            .pivot_table(index="Snapshot", columns="Category", values="Volume (%)", aggfunc="sum", fill_value=0.0)
+            .reindex(columns=order, fill_value=0.0)
+        )
+        if pivot.empty:
+            return None
+        fig, ax = plt.subplots(figsize=(11.2, 6.2))
+        bottom = pd.Series(0.0, index=pivot.index)
+        for category in order:
+            values = pd.to_numeric(pivot[category], errors="coerce").fillna(0.0)
+            ax.bar(
+                pivot.index.astype(str),
+                values,
+                bottom=bottom,
+                label=category,
+                color=_RESCAT_REPORT_COLORS.get(category, _RESCAT_GRAY),
+                edgecolor="white",
+                linewidth=1.0,
+            )
+            bottom = bottom + values
+        ax.set_ylim(0, 100)
+        ax.set_title("Resource-category evolution by snapshot", fontsize=19, fontweight="bold", color="#26323A", pad=20)
+        _style_report_axis(ax, "Snapshot", "Volume (%)", rotation=0)
+        _place_report_legend(ax, ncol=4)
+        fig.tight_layout()
+        return _rescat_save_figure(fig)
+    except Exception:
+        return None
+
+
+def _rescat_heatmap_png(table: pd.DataFrame, title: str, x_label: str, y_label: str, suffix: str = "%") -> bytes | None:
+    if not isinstance(table, pd.DataFrame) or table.empty:
+        return None
+    try:
+        import matplotlib
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import LinearSegmentedColormap
+
+        values = table.apply(pd.to_numeric, errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        cmap = LinearSegmentedColormap.from_list(
+            "barrick_rescat",
+            [_RESCAT_GRAY, _RESCAT_GOLD, _RESCAT_ORANGE, _RESCAT_BLUE],
+            N=256,
+        )
+        fig_width = max(9.5, 1.0 * len(table.columns) + 4.2)
+        fig_height = max(6.2, 0.58 * len(table.index) + 3.6)
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+        image = ax.imshow(values, cmap=cmap, aspect="auto", vmin=0, vmax=max(100.0, float(values.max()) if values.size else 100.0))
+        ax.set_xticks(range(len(table.columns)))
+        ax.set_xticklabels([str(value) for value in table.columns], rotation=35, ha="right", fontsize=11)
+        ax.set_yticks(range(len(table.index)))
+        ax.set_yticklabels([str(value) for value in table.index], fontsize=11)
+        ax.set_xlabel(x_label, fontsize=15, fontweight="semibold", color="#26323A")
+        ax.set_ylabel(y_label, fontsize=15, fontweight="semibold", color="#26323A")
+        ax.set_title(title, fontsize=19, fontweight="bold", color="#26323A", pad=18)
+        for i in range(values.shape[0]):
+            for j in range(values.shape[1]):
+                value = values[i, j]
+                color = "white" if value >= 55 else "#26323A"
+                ax.text(j, i, f"{value:.1f}{suffix}", ha="center", va="center", fontsize=10.5, color=color, fontweight="semibold")
+        colorbar = fig.colorbar(image, ax=ax, fraction=0.035, pad=0.025)
+        colorbar.ax.tick_params(labelsize=10)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        fig.tight_layout()
+        return _rescat_save_figure(fig)
+    except Exception:
+        return None
+
+
+def _rescat_volume_flow_png(volume_mm3: pd.DataFrame, title: str) -> bytes | None:
+    if not isinstance(volume_mm3, pd.DataFrame) or volume_mm3.empty:
+        return None
+    try:
+        import matplotlib
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+        from matplotlib.path import Path
+        from matplotlib.patches import PathPatch, Rectangle
+        import matplotlib.colors as mcolors
+
+        matrix = volume_mm3.apply(pd.to_numeric, errors="coerce").fillna(0.0).clip(lower=0.0)
+        categories = [str(value) for value in matrix.index]
+        matrix = matrix.reindex(index=categories, columns=categories, fill_value=0.0)
+        total = float(matrix.to_numpy().sum())
+        if total <= 0:
+            return None
+
+        left_totals = matrix.sum(axis=1)
+        right_totals = matrix.sum(axis=0)
+        gap = 0.025
+        usable = 1.0 - gap * max(0, len(categories) - 1)
+
+        def positions(totals: pd.Series) -> dict[str, tuple[float, float]]:
+            result: dict[str, tuple[float, float]] = {}
+            cursor = 1.0
+            denominator = float(totals.sum()) or 1.0
+            for cat in categories:
+                height = usable * float(totals.get(cat, 0.0)) / denominator
+                top = cursor
+                bottom = cursor - height
+                result[cat] = (bottom, top)
+                cursor = bottom - gap
+            return result
+
+        left_pos = positions(left_totals)
+        right_pos = positions(right_totals)
+        left_offsets = {cat: left_pos[cat][0] for cat in categories}
+        right_offsets = {cat: right_pos[cat][0] for cat in categories}
+        x_left, x_right, node_w = 0.08, 0.92, 0.035
+
+        fig, ax = plt.subplots(figsize=(11.5, 7.0))
+        for origin in categories:
+            origin_total = float(left_totals.get(origin, 0.0)) or 1.0
+            for destination in categories:
+                value = float(matrix.loc[origin, destination])
+                if value <= 0:
+                    continue
+                left_height = (left_pos[origin][1] - left_pos[origin][0]) * value / origin_total
+                destination_total = float(right_totals.get(destination, 0.0)) or 1.0
+                right_height = (right_pos[destination][1] - right_pos[destination][0]) * value / destination_total
+                y0a = left_offsets[origin]
+                y0b = y0a + left_height
+                y1a = right_offsets[destination]
+                y1b = y1a + right_height
+                left_offsets[origin] = y0b
+                right_offsets[destination] = y1b
+                c1 = x_left + 0.30
+                c2 = x_right - 0.30
+                verts = [
+                    (x_left + node_w, y0a),
+                    (c1, y0a),
+                    (c2, y1a),
+                    (x_right, y1a),
+                    (x_right, y1b),
+                    (c2, y1b),
+                    (c1, y0b),
+                    (x_left + node_w, y0b),
+                    (x_left + node_w, y0a),
+                ]
+                codes = [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4, Path.LINETO, Path.CURVE4, Path.CURVE4, Path.CURVE4, Path.CLOSEPOLY]
+                color = _RESCAT_REPORT_COLORS.get(origin, _RESCAT_GRAY)
+                ax.add_patch(PathPatch(Path(verts, codes), facecolor=color, alpha=0.34, edgecolor="none"))
+
+        for cat in categories:
+            color = _RESCAT_REPORT_COLORS.get(cat, _RESCAT_GRAY)
+            lb, lt = left_pos[cat]
+            rb, rt = right_pos[cat]
+            ax.add_patch(Rectangle((x_left, lb), node_w, lt - lb, facecolor=color, edgecolor="white", linewidth=1.0))
+            ax.add_patch(Rectangle((x_right, rb), node_w, rt - rb, facecolor=color, edgecolor="white", linewidth=1.0))
+            ax.text(x_left - 0.015, (lb + lt) / 2.0, f"Initial: {cat}", ha="right", va="center", fontsize=11.5, color="#26323A", fontweight="semibold")
+            ax.text(x_right + node_w + 0.015, (rb + rt) / 2.0, f"Later: {cat}", ha="left", va="center", fontsize=11.5, color="#26323A", fontweight="semibold")
+
+        ax.set_xlim(-0.16, 1.20)
+        ax.set_ylim(-0.03, 1.04)
+        ax.axis("off")
+        ax.set_title(title, fontsize=19, fontweight="bold", color="#26323A", pad=20)
+        fig.tight_layout()
+        return _rescat_save_figure(fig)
+    except Exception:
+        return None
+
+
+def _rescat_grouped_bar_png(
+    table: pd.DataFrame,
+    value_columns: list[str],
+    colors_list: list[str],
+    title: str,
+    y_label: str,
+    x_column: str = "Transition",
+    y_limit_100: bool = False,
+) -> bytes | None:
+    if not isinstance(table, pd.DataFrame) or table.empty or x_column not in table.columns:
+        return None
+    available = [column for column in value_columns if column in table.columns]
+    if not available:
+        return None
+    try:
+        import matplotlib
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        x = np.arange(len(table))
+        width = min(0.24, 0.78 / max(1, len(available)))
+        fig, ax = plt.subplots(figsize=(11.3, 6.3))
+        start = -(len(available) - 1) * width / 2.0
+        for idx, column in enumerate(available):
+            values = pd.to_numeric(table[column], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+            bars = ax.bar(
+                x + start + idx * width,
+                values,
+                width,
+                label=column.replace(" (%)", ""),
+                color=colors_list[idx % len(colors_list)],
+                edgecolor="white",
+                linewidth=1.0,
+            )
+            for bar, value in zip(bars, values, strict=True):
+                ax.text(bar.get_x() + bar.get_width()/2.0, bar.get_height(), f"{value:.1f}%", ha="center", va="bottom", fontsize=9.5, color="#26323A")
+        ax.set_xticks(x)
+        ax.set_xticklabels(table[x_column].astype(str).tolist())
+        if y_limit_100:
+            ax.set_ylim(0, 105)
+        ax.set_title(title, fontsize=19, fontweight="bold", color="#26323A", pad=20)
+        _style_report_axis(ax, "Model transition", y_label, rotation=0)
+        _place_report_legend(ax, ncol=max(1, len(available)))
+        fig.tight_layout()
+        return _rescat_save_figure(fig)
+    except Exception:
+        return None
+
+
+def _rescat_reliability_bar_png(summary: pd.DataFrame, tolerance_pct: float, mode: str) -> bytes | None:
+    if not isinstance(summary, pd.DataFrame) or summary.empty:
+        return None
+    categories = [value for value in ["Measured", "Indicated"] if value in summary.get("Initial category", pd.Series(dtype=str)).astype(str).tolist()]
+    if not categories:
+        return None
+    try:
+        import matplotlib
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        fig, ax = plt.subplots(figsize=(10.8, 6.4))
+        if mode == "accuracy":
+            metrics = ["Aggregate Au oz bias (%)", "Au oz WAPE (%)"]
+            labels = ["Aggregate bias", "WAPE"]
+            x = np.arange(len(metrics))
+            width = 0.34
+            for idx, category in enumerate(categories):
+                row = summary[summary["Initial category"].astype(str).eq(category)].iloc[0]
+                values = [float(row.get(metric, float("nan"))) for metric in metrics]
+                positions = x + (idx - (len(categories)-1)/2.0) * width
+                bars = ax.bar(
+                    positions,
+                    values,
+                    width,
+                    label=category,
+                    color=_RESCAT_REPORT_COLORS.get(category, _RESCAT_GRAY),
+                    edgecolor="white",
+                    linewidth=1.0,
+                )
+                for bar, value in zip(bars, values, strict=True):
+                    if pd.notna(value):
+                        va = "bottom" if value >= 0 else "top"
+                        ax.text(bar.get_x()+bar.get_width()/2.0, bar.get_height(), f"{value:.1f}%", ha="center", va=va, fontsize=9.5, color="#26323A")
+            ax.axhline(0, color="#59656D", linewidth=1.0, linestyle="--")
+            ax.set_xticks(x)
+            ax.set_xticklabels(labels)
+            ylabel = "Au-content error (%)"
+            title = "Measured reliability - Au-content accuracy and absolute uncertainty"
+        else:
+            metric = f"GC Au oz within ±{tolerance_pct:g}% (%)"
+            x = np.arange(len(categories))
+            values = []
+            for category in categories:
+                row = summary[summary["Initial category"].astype(str).eq(category)].iloc[0]
+                values.append(float(row.get(metric, float("nan"))))
+            colors = [_RESCAT_REPORT_COLORS.get(category, _RESCAT_GRAY) for category in categories]
+            bars = ax.bar(x, values, 0.62, color=colors, edgecolor="white", linewidth=1.0)
+            for bar, value in zip(bars, values, strict=True):
+                if pd.notna(value):
+                    ax.text(bar.get_x()+bar.get_width()/2.0, bar.get_height(), f"{value:.1f}%", ha="center", va="bottom", fontsize=9.5, color="#26323A")
+            ax.set_xticks(x)
+            ax.set_xticklabels(categories)
+            ax.set_ylim(0, 105)
+            ylabel = "GC Au ounces within tolerance (%)"
+            title = f"Measured reliability - GC Au ounces within ±{tolerance_pct:g}%"
+
+        ax.set_title(title, fontsize=18.5, fontweight="bold", color="#26323A", pad=20)
+        _style_report_axis(ax, "Metric" if mode == "accuracy" else "Initial category", ylabel, rotation=0)
+        if mode == "accuracy":
+            _place_report_legend(ax, ncol=2)
+        fig.tight_layout()
+        return _rescat_save_figure(fig)
+    except Exception:
+        return None
+
+
+def _rescat_reliability_interval_png(summary: pd.DataFrame, tolerance_pct: float) -> bytes | None:
+    if not isinstance(summary, pd.DataFrame) or summary.empty:
+        return None
+    required = {
+        "Initial category",
+        "Weighted P10 Au oz bias (%)",
+        "Weighted P50 Au oz bias (%)",
+        "Weighted P90 Au oz bias (%)",
+    }
+    if not required.issubset(summary.columns):
+        return None
+    try:
+        import matplotlib
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        categories = [value for value in ["Measured", "Indicated"] if value in summary["Initial category"].astype(str).tolist()]
+        if not categories:
+            return None
+        fig, ax = plt.subplots(figsize=(10.8, 5.4))
+        y = np.arange(len(categories))
+        ax.axvspan(-float(tolerance_pct), float(tolerance_pct), color=_RESCAT_GOLD, alpha=0.10, linewidth=0)
+        ax.axvline(-float(tolerance_pct), color=_RESCAT_GOLD, linewidth=1.2, linestyle=":")
+        ax.axvline(0, color="#59656D", linewidth=1.0, linestyle="--")
+        ax.axvline(float(tolerance_pct), color=_RESCAT_GOLD, linewidth=1.2, linestyle=":")
+        for idx, category in enumerate(categories):
+            row = summary[summary["Initial category"].astype(str).eq(category)].iloc[0]
+            p10 = float(row["Weighted P10 Au oz bias (%)"])
+            p50 = float(row["Weighted P50 Au oz bias (%)"])
+            p90 = float(row["Weighted P90 Au oz bias (%)"])
+            color = _RESCAT_REPORT_COLORS.get(category, _RESCAT_GRAY)
+            ax.plot([p10, p90], [idx, idx], color=color, linewidth=8, solid_capstyle="round")
+            ax.scatter([p50], [idx], s=90, facecolor="white", edgecolor=color, linewidth=2.4, zorder=3)
+            ax.text(p10, idx + 0.14, f"P10 {p10:.1f}%", ha="center", va="bottom", fontsize=9, color="#26323A")
+            ax.text(p90, idx + 0.14, f"P90 {p90:.1f}%", ha="center", va="bottom", fontsize=9, color="#26323A")
+        ax.set_yticks(y)
+        ax.set_yticklabels(categories)
+        ax.invert_yaxis()
+        ax.set_title("Measured reliability - weighted P10-P90 Au-content bias", fontsize=18.5, fontweight="bold", color="#26323A", pad=20)
+        _style_report_axis(ax, "Au-content bias relative to later GC (%)", "Initial category", rotation=0)
+        fig.tight_layout()
+        return _rescat_save_figure(fig)
+    except Exception:
+        return None
+
+
+def _rescat_domain_bar_png(summary: pd.DataFrame, domain_label: str, tolerance_pct: float) -> bytes | None:
+    if not isinstance(summary, pd.DataFrame) or summary.empty:
+        return None
+    required = {"Domain", "Initial category", "Au oz WAPE (%)"}
+    if not required.issubset(summary.columns):
+        return None
+    try:
+        import matplotlib
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        domains = summary.groupby("Domain", observed=True)["GC support (Mt)"].sum().sort_values(ascending=False).head(12).index.astype(str).tolist()
+        categories = ["Measured", "Indicated"]
+        x = np.arange(len(domains))
+        width = 0.36
+        fig, ax = plt.subplots(figsize=(max(11.0, len(domains)*0.85), 6.5))
+        for idx, category in enumerate(categories):
+            values = []
+            for domain in domains:
+                matched = summary[(summary["Domain"].astype(str).eq(domain)) & (summary["Initial category"].astype(str).eq(category))]
+                values.append(float(matched["Au oz WAPE (%)"].iloc[0]) if not matched.empty else float("nan"))
+            positions = x + (idx - 0.5) * width
+            ax.bar(positions, values, width, label=category, color=_RESCAT_REPORT_COLORS[category], edgecolor="white", linewidth=1.0)
+        ax.set_xticks(x)
+        ax.set_xticklabels(domains)
+        ax.set_title(f"Au-content WAPE by {domain_label}", fontsize=18.5, fontweight="bold", color="#26323A", pad=20)
+        _style_report_axis(ax, domain_label, "Au-content WAPE (%)", rotation=35)
+        _place_report_legend(ax, ncol=2)
+        fig.tight_layout()
+        return _rescat_save_figure(fig)
+    except Exception:
+        return None
+
+
+def _rescat_panel_support_png(support: pd.DataFrame) -> bytes | None:
+    if not isinstance(support, pd.DataFrame) or support.empty or "Tonnes (Mt)" not in support.columns:
+        return None
+    try:
+        import matplotlib
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+
+        values = pd.to_numeric(support["Tonnes (Mt)"], errors="coerce").dropna()
+        if values.empty:
+            return None
+        fig, ax = plt.subplots(figsize=(10.8, 6.2))
+        ax.hist(values, bins=40, color=_RESCAT_BLUE, edgecolor="white", linewidth=1.2)
+        ax.set_title("Panel-support distribution", fontsize=19, fontweight="bold", color="#26323A", pad=20)
+        _style_report_axis(ax, "Panel support (Mt)", "Panel count", rotation=0)
+        fig.tight_layout()
+        return _rescat_save_figure(fig)
+    except Exception:
+        return None
+
+
+def _rescat_report_charts() -> list[dict[str, Any]]:
+    package = _rescat_report_package()
+    if not package:
+        return []
+    data = package.get("chart_data", {}) if isinstance(package.get("chart_data", {}), dict) else {}
+    charts: list[dict[str, Any]] = []
+
+    def add(title: str, image: bytes | None, notes: list[str]) -> None:
+        if image:
+            charts.append({"title": title, "image": image, "notes": notes})
+
+    initial = str(package.get("initial_label", "Initial"))
+    later = str(package.get("later_label", "Later"))
+    tolerance = float(package.get("tolerance_pct", 15.0))
+
+    evolution = data.get("evolution", pd.DataFrame())
+    add(
+        "ResCat Stability - Resource Category Evolution",
+        _rescat_category_evolution_png(evolution),
+        ["Volume-weighted category shares on the common XYZ population."],
+    )
+
+    transition_pct = data.get("transition_pct", pd.DataFrame())
+    add(
+        f"ResCat Conversion - Transition Matrix ({initial} to {later})",
+        _rescat_heatmap_png(transition_pct, "CATEG_GC transition", "Later category", "Initial category"),
+        ["Each row is expressed as a percentage of the initial resource category."],
+    )
+
+    transition_volume = data.get("transition_volume_mm3", pd.DataFrame())
+    add(
+        f"ResCat Conversion - Volume Flow ({initial} to {later})",
+        _rescat_volume_flow_png(transition_volume, "Volume flow - initial to later snapshot"),
+        ["Flow widths represent transitioned volume in Mm3."],
+    )
+
+    consecutive = data.get("consecutive", pd.DataFrame())
+    add(
+        "ResCat Conversion - Consecutive Model Conversion Rates",
+        _rescat_grouped_bar_png(
+            consecutive,
+            ["I → M (%)", "I → GC (%)", "M → GC (%)"],
+            [_RESCAT_BLUE, _RESCAT_GOLD, _RESCAT_ORANGE],
+            "Direct conversion rates by consecutive model pair",
+            "% of initial category",
+        ),
+        ["Direct conversion rates are descriptive and also reflect where later drilling was executed."],
+    )
+    add(
+        "ResCat Conversion - Consecutive Model Retention",
+        _rescat_grouped_bar_png(
+            consecutive,
+            ["I retained (%)", "M retained (%)", "GC retained (%)"],
+            [_RESCAT_GOLD, _RESCAT_BLUE, _RESCAT_ORANGE],
+            "Category retention by consecutive model pair",
+            "% retained from initial category",
+            y_limit_100=True,
+        ),
+        ["Retention is the share of each initial category that remains in the same category in the next loaded snapshot."],
+    )
+
+    uncertainty = data.get("uncertainty", pd.DataFrame())
+    add(
+        "Meas Reliability - Accuracy and WAPE",
+        _rescat_reliability_bar_png(uncertainty, tolerance, "accuracy"),
+        ["Aggregate Au-content bias measures overall accuracy; Au-content WAPE measures absolute uncertainty without cancellation."],
+    )
+    add(
+        "Meas Reliability - Weighted P10-P90",
+        _rescat_reliability_interval_png(uncertainty, tolerance),
+        ["The P10-P90 interval is weighted by later Grade Control Au ounces; a narrower interval centered near zero indicates greater reliability."],
+    )
+    add(
+        "Meas Reliability - GC Ounces Within Tolerance",
+        _rescat_reliability_bar_png(uncertainty, tolerance, "coverage"),
+        [f"This is the share of later Grade Control Au ounces represented by panel cells within ±{tolerance:g}% Au-content bias."],
+    )
+
+    domain_summaries = data.get("domain_summaries", {})
+    if isinstance(domain_summaries, dict):
+        for domain_label, summary in domain_summaries.items():
+            add(
+                f"Meas Reliability by {domain_label}",
+                _rescat_domain_bar_png(summary, str(domain_label), tolerance),
+                ["Later Grade Control is the benchmark state; lower Au-content WAPE indicates lower observed absolute uncertainty."],
+            )
+
+    domain_stability = data.get("domain_stability", {})
+    if isinstance(domain_stability, dict):
+        for domain_label, stability in domain_stability.items():
+            add(
+                f"{domain_label} - Geological Categorical Stability",
+                _rescat_heatmap_png(stability, f"{domain_label} categorical stability", f"Later {domain_label}", f"Initial {domain_label}"),
+                ["This chart measures categorical interpretation stability separately from resource-category conversion."],
+            )
+
+    support = data.get("panel_support", pd.DataFrame())
+    add(
+        "Panel Support - Distribution",
+        _rescat_panel_support_png(support),
+        [f"Fixed panel geometry: {package.get('panel_geometry', 'N/A')}"],
+    )
+    return charts
+
+
 # Function: _automatic_report_tables
 # Support the automatic report tables workflow.
 def _automatic_report_tables(scoped_bundles: dict[str, ModelBundle]) -> list[dict[str, Any]]:
     """Collect only the principal evaluation and comparison result tables."""
     items: list[dict[str, Any]] = []
     if not scoped_bundles:
-        return items
+        return _rescat_report_tables()
 
     for model_name, bundle in scoped_bundles.items():
         raw_bundle = st.session_state.models.get(model_name, bundle)
@@ -8068,6 +8631,7 @@ def _automatic_report_tables(scoped_bundles: dict[str, ModelBundle]) -> list[dic
         }
         items.extend(_five_year_report_items(raw_bundles))
 
+    items.extend(_rescat_report_tables())
     return items
 
 # Function: _is_report_text_column
@@ -9217,6 +9781,7 @@ def _automatic_report_charts(scoped_bundles: dict[str, ModelBundle]) -> list[dic
                     ),
                 }
             )
+    charts.extend(_rescat_report_charts())
     return charts
 
 # Function: _report_pdf_bytes
@@ -9226,6 +9791,7 @@ def _report_pdf_bytes(
     charts: list[dict[str, Any]],
     model_names: list[str],
     report_name: str | None = None,
+    scope_bits_override: list[str] | None = None,
 ) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -9265,13 +9831,15 @@ def _report_pdf_bytes(
     cover_title = cover_title.replace("_", " ") or "Block Model Studio Automatic Report v1.0"
     story.append(Paragraph(html.escape(cover_title), title_style))
     story.append(Paragraph(_report_model_label(model_names), subtitle_style))
-    scope_bits = [
-        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        f"BLK_MODEL: {st.session_state.get('master_blk_model_scope', 'N/A')}",
-        f"{_active_time_role()}: {_master_time_label()}",
-        f"Phase: {_master_phase_label()}",
-        f"Destination / Ore Type: {_master_destination_label()}",
-    ]
+    scope_bits = list(scope_bits_override or [])
+    if not scope_bits:
+        scope_bits = [
+            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            f"BLK_MODEL: {st.session_state.get('master_blk_model_scope', 'N/A')}",
+            f"{_active_time_role()}: {_master_time_label()}",
+            f"Phase: {_master_phase_label()}",
+            f"Destination / Ore Type: {_master_destination_label()}",
+        ]
     story.append(Paragraph(" | ".join(scope_bits), subtitle_style))
     story.append(PageBreak())
 
@@ -9286,7 +9854,7 @@ def _report_pdf_bytes(
             if rendered_table_count > 0:
                 story.append(PageBreak())
             else:
-                story.append(Paragraph("Evaluation and Comparison Tables", section_style))
+                story.append(Paragraph("Automatic Report Tables", section_style))
             story.append(Paragraph(html.escape(str(item["title"])), section_style))
             rendered_table_count += 1
             table_data = _pdf_table_data(
@@ -9329,7 +9897,7 @@ def _report_pdf_bytes(
             # Portrait report: one chart per page for maximum readability.
             story.append(PageBreak())
             if rendered_chart_count == 0:
-                story.append(Paragraph("Evaluation and Comparison Charts", section_style))
+                story.append(Paragraph("Automatic Report Charts", section_style))
             story.append(Paragraph(html.escape(str(chart["title"])), section_style))
             rendered_chart_count += 1
 
@@ -9390,29 +9958,35 @@ def _report_pdf_bytes(
 def render_reports() -> None:
     _scroll_to_page_top("Reports")
     header_placeholder = st.empty()
-    if not st.session_state.models:
+    rescat_package = _rescat_report_package()
+    has_core_models = bool(st.session_state.models)
+    has_rescat = bool(rescat_package)
+
+    if not has_core_models and not has_rescat:
         with header_placeholder.container():
-            page_header("Report Builder", "Automatically export evaluation/comparison tables with footnotes and all available charts from the active session.")
-        _render_no_models_state("No models available for reporting")
+            page_header("Report Builder", "Automatically export available Evaluation, Comparison and ResCat Stability results from the active session.")
+        _render_no_models_state("No reportable analysis is available in the active session")
         return
 
-    raw_bundles = list(st.session_state.models.values())
-    _render_master_year_filter_sidebar(raw_bundles, "reports")
-    _render_master_destination_filter_sidebar(raw_bundles, "reports")
-    _render_master_phase_filter_sidebar(raw_bundles, "reports")
+    if has_core_models:
+        raw_bundles = list(st.session_state.models.values())
+        _render_master_year_filter_sidebar(raw_bundles, "reports")
+        _render_master_destination_filter_sidebar(raw_bundles, "reports")
+        _render_master_phase_filter_sidebar(raw_bundles, "reports")
 
     with header_placeholder.container():
-        page_header("Report Builder", "Automatically export evaluation/comparison tables with footnotes and all available charts from the active session.")
+        page_header("Report Builder", "Automatically export available Evaluation, Comparison and ResCat Stability results from the active session.")
 
-    scoped_bundles = {name: _scoped_bundle(bundle) for name, bundle in st.session_state.models.items()}
+    scoped_bundles = {name: _scoped_bundle(bundle) for name, bundle in st.session_state.models.items()} if has_core_models else {}
     model_names = list(scoped_bundles.keys())
+    rescat_snapshots = list(rescat_package.get("snapshot_labels", [])) if has_rescat else []
 
     st.markdown(
         """
         <section class="bm-report-intro">
             <div class="bm-report-intro-kicker">Automatic package</div>
             <div class="bm-report-intro-title">Build one governed report from the active workspace</div>
-            <div class="bm-report-intro-text">The Excel workbook contains principal result tables and filter notes. The PDF adds the charts available from Evaluation and Comparison, including the independent five-year Au/Ag tables when two or more comparison models are selected.</div>
+            <div class="bm-report-intro-text">The report automatically collects the principal tables and available charts from Model Evaluation, Model Comparison and ResCat Stability. Each section is included only when its analysis is available in the active session.</div>
         </section>
         """,
         unsafe_allow_html=True,
@@ -9429,17 +10003,17 @@ def render_reports() -> None:
         report_name = default_report_name
     download_base = re.sub(r"[^A-Za-z0-9._-]+", "_", report_name).strip("._-") or default_report_name
     download_base = download_base[:120]
-    report_title = f"{report_name.replace('_', ' ')} - {_report_model_label(model_names)}"
 
     items = _automatic_report_tables(scoped_bundles)
     charts = _automatic_report_charts(scoped_bundles)
 
-    _render_dashboard_kpi_cards([
+    dashboard_cards = [
         {"label": "Models", "value": f"{len(model_names):,}", "bg": "#D9E2F3", "border": "#AEBBD0"},
+        {"label": "ResCat snapshots", "value": f"{len(rescat_snapshots):,}", "bg": "#F3EBD7", "border": "#A39161"},
         {"label": "Tables", "value": f"{len(items):,}", "bg": "#E7E6E6", "border": "#C9C9C9"},
-        {"label": "Charts", "value": f"{len(charts):,}", "bg": "#EFE5A1", "border": "#D6C45A"},
-        {"label": f"{_active_time_role()} scope", "value": _master_time_label(), "bg": "#E6F4EA", "border": "#70AD47"},
-    ])
+        {"label": "Charts", "value": f"{len(charts):,}", "bg": "#FFF1C7", "border": "#FDB813"},
+    ]
+    _render_dashboard_kpi_cards(dashboard_cards)
 
     preview = pd.DataFrame([
         {"Section": item.get("category", "Table"), "Table": item["title"], "Rows": len(item["table"]), "Columns": len(item["table"].columns)}
@@ -9447,15 +10021,42 @@ def render_reports() -> None:
     ])
     st.markdown("#### Export inventory")
     if preview.empty:
-        st.warning("No report tables are available under the current model scope and filters.")
+        st.warning("No report tables are available in the active session.")
     else:
         st.dataframe(preview, use_container_width=True, hide_index=True)
 
+    report_entities = model_names.copy()
+    if has_rescat:
+        pair_label = f"ResCat: {rescat_package.get('initial_label', 'Initial')} → {rescat_package.get('later_label', 'Later')}"
+        report_entities.append(pair_label)
+
+    scope_bits = [f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"]
+    if has_core_models:
+        scope_bits.extend([
+            f"BLK_MODEL: {st.session_state.get('master_blk_model_scope', 'N/A')}",
+            f"{_active_time_role()}: {_master_time_label()}",
+            f"Phase: {_master_phase_label()}",
+            f"Destination / Ore Type: {_master_destination_label()}",
+        ])
+    if has_rescat:
+        scope_bits.extend([
+            f"ResCat snapshots: {len(rescat_snapshots)}",
+            f"ResCat pair: {rescat_package.get('initial_label', 'Initial')} to {rescat_package.get('later_label', 'Later')}",
+            f"Panel: {rescat_package.get('panel_geometry', 'N/A')}",
+            f"Tolerance: ±{float(rescat_package.get('tolerance_pct', 15.0)):g}%",
+        ])
+
     excel_bytes = _report_excel_bytes(items)
-    pdf_bytes = _report_pdf_bytes(items, charts, model_names, report_name)
+    pdf_bytes = _report_pdf_bytes(items, charts, report_entities, report_name, scope_bits_override=scope_bits)
 
     st.markdown("#### Download package")
-    st.caption("Evaluation tables use the active master scope shown above. The five-year Au/Ag comparison tables retain their independent Model Comparison controls, reference model and planning window.")
+    if has_core_models and has_rescat:
+        st.caption("Evaluation/Comparison sections use the active master scope. ResCat Stability retains its independent snapshot, XYZ-alignment, panel-support and tolerance settings from the latest ResCat analysis in this session.")
+    elif has_rescat:
+        st.caption("ResCat Stability retains its independent snapshot, XYZ-alignment, panel-support and tolerance settings from the latest ResCat analysis in this session.")
+    else:
+        st.caption("Evaluation and Comparison tables use the active master scope shown above. Independent comparison controls are preserved where applicable.")
+
     export_cols = st.columns(2)
     export_cols[0].download_button(
         "Download automatic Excel tables",
@@ -9472,20 +10073,7 @@ def render_reports() -> None:
         use_container_width=True,
     )
 
-    with st.expander("Report contents", expanded=False):
-        st.markdown(f"**{report_title}**")
-        st.markdown("The Excel file contains the principal evaluation/comparison result tables and their footnotes, including five-year Au/Ag content and difference tables when available. The PDF contains those tables plus all charts from the corresponding evaluation and comparison sections.")
-        if charts:
-            st.markdown("**Charts included:** " + ", ".join(chart["title"] for chart in charts))
 
-
-
-# =============================================================================
-# ABOUT PAGE AND AUTHORSHIP INFORMATION
-# =============================================================================
-# Function: render_about
-# Render application purpose, technical scope, author information and
-# responsible-use notice.
 def render_about() -> None:
     """Render the application information, authorship and technical-use notice."""
     _scroll_to_page_top("About")
