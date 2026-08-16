@@ -69,6 +69,20 @@ DOMAIN_COLORS = {
     "Alteration": BARRICK_ORANGE,
 }
 
+# Reliability is evaluated along the three information-maturation paths that
+# matter to the resource-classification study. The later category is always
+# treated as the better-informed benchmark for that specific transition.
+RELIABILITY_TRANSITIONS: tuple[tuple[str, str, str], ...] = (
+    ("I → M", "Indicated", "Measured"),
+    ("M → GC", "Measured", "Grade Control"),
+    ("I → GC", "Indicated", "Grade Control"),
+)
+TRANSITION_COLORS = {
+    "I → M": BARRICK_BLUE,
+    "M → GC": BARRICK_ORANGE,
+    "I → GC": BARRICK_GOLD,
+}
+
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "x": ("centroid_x", "x_centroid", "centroidx", "x", "xc", "easting"),
     "y": ("centroid_y", "y_centroid", "centroidy", "y", "yc", "northing"),
@@ -551,7 +565,7 @@ def _render_page_header(
                 <div>
                     <div class="bm-page-header-kicker">PV BlockModel Studio</div>
                     <div class="bm-page-header-title">ResCat Stability</div>
-                    <div class="bm-page-header-subtitle">Evaluate resource-category conversion and Measured reliability against the later Grade Control benchmark.</div>
+                    <div class="bm-page-header-subtitle">Quantify how tonnes, Au grade and Au content change as resource categories mature from Indicated to Measured and Grade Control.</div>
                 </div>
                 <div class="bm-page-header-chips">{chip_html}</div>
             </div>
@@ -972,16 +986,19 @@ def _pair_selectors(labels: list[str], key_prefix: str) -> tuple[str, str]:
 
 
 def _cohort_summary(pair: pd.DataFrame) -> pd.DataFrame:
-    work = pair[
-        pair["rescat_from"].isin(["Indicated", "Measured"])
-        & pair["rescat_to"].eq("Grade Control")
-    ].copy()
-    if work.empty:
-        return pd.DataFrame()
+    """Summarize the three core resource-category maturation transitions.
 
+    For every transition the later category is the comparison benchmark:
+    I → M compares the earlier Indicated estimate with the later Measured
+    estimate; M → GC compares Measured with later Grade Control; and I → GC
+    compares Indicated directly with later Grade Control.
+    """
     rows: list[dict[str, Any]] = []
-    for category in ["Measured", "Indicated"]:
-        group = work[work["rescat_from"].eq(category)]
+    for transition, initial_category, later_category in RELIABILITY_TRANSITIONS:
+        group = pair[
+            pair["rescat_from"].eq(initial_category)
+            & pair["rescat_to"].eq(later_category)
+        ].copy()
         if group.empty:
             continue
 
@@ -995,17 +1012,19 @@ def _cohort_summary(pair: pd.DataFrame) -> pd.DataFrame:
 
         rows.append(
             {
-                "Initial category": category,
-                "Blocks reaching GC": len(group),
+                "Transition": transition,
+                "Initial category": initial_category,
+                "Later category": later_category,
+                "Blocks": len(group),
                 "Volume (Mm3)": volume / 1_000_000.0,
                 "Initial tonnes (Mt)": tonnes_from / 1_000_000.0,
-                "GC tonnes (Mt)": tonnes_to / 1_000_000.0,
+                "Later tonnes (Mt)": tonnes_to / 1_000_000.0,
                 "Tonnes bias (%)": _bias_pct(tonnes_from, tonnes_to),
                 "Initial Au (g/t)": grade_from,
-                "GC Au (g/t)": grade_to,
+                "Later Au (g/t)": grade_to,
                 "Au grade bias (%)": _bias_pct(grade_from, grade_to),
                 "Initial Au (oz)": oz_from,
-                "GC Au (oz)": oz_to,
+                "Later Au (oz)": oz_to,
                 "Au oz bias (%)": _bias_pct(oz_from, oz_to),
             }
         )
@@ -1028,45 +1047,54 @@ def _panel_cohort_metrics(
     origin: tuple[float, float, float],
     minimum_support_mt: float,
 ) -> pd.DataFrame:
-    work = pair[
-        pair["rescat_from"].isin(["Indicated", "Measured"])
-        & pair["rescat_to"].eq("Grade Control")
-    ].copy()
-    if work.empty:
-        return pd.DataFrame()
+    """Calculate panel-level change for I→M, M→GC and I→GC.
 
-    work["Panel"] = _panel_ids(work, sx, sy, sz, origin)
+    The fixed panel geometry is identical for every transition. Minimum support
+    is evaluated on the later/better-informed state so the same rule is valid
+    whether the benchmark category is Measured or Grade Control.
+    """
     rows: list[dict[str, Any]] = []
-    for (panel, category), group in work.groupby(["Panel", "rescat_from"], observed=True):
-        volume = float(pd.to_numeric(group["volume_from"], errors="coerce").fillna(0).clip(lower=0).sum())
-        tonnes_from = float(pd.to_numeric(group["tonnes_from"], errors="coerce").fillna(0).clip(lower=0).sum())
-        tonnes_to = float(pd.to_numeric(group["tonnes_to"], errors="coerce").fillna(0).clip(lower=0).sum())
-        support_mt = tonnes_to / 1_000_000.0
-        if support_mt < float(minimum_support_mt):
+    for transition, initial_category, later_category in RELIABILITY_TRANSITIONS:
+        work = pair[
+            pair["rescat_from"].eq(initial_category)
+            & pair["rescat_to"].eq(later_category)
+        ].copy()
+        if work.empty:
             continue
+        work["Panel"] = _panel_ids(work, sx, sy, sz, origin)
 
-        grade_from = _weighted_grade(group, "au_from", "tonnes_from")
-        grade_to = _weighted_grade(group, "au_to", "tonnes_to")
-        oz_from = float(pd.to_numeric(group["au_oz_from"], errors="coerce").fillna(0).sum())
-        oz_to = float(pd.to_numeric(group["au_oz_to"], errors="coerce").fillna(0).sum())
-        rows.append(
-            {
-                "Panel": panel,
-                "Initial category": category,
-                "Blocks": len(group),
-                "Volume (Mm3)": volume / 1_000_000.0,
-                "Initial tonnes (t)": tonnes_from,
-                "GC tonnes (t)": tonnes_to,
-                "GC support (Mt)": support_mt,
-                "Initial Au (g/t)": grade_from,
-                "GC Au (g/t)": grade_to,
-                "Initial Au (oz)": oz_from,
-                "GC Au (oz)": oz_to,
-                "Tonnes bias (%)": _bias_pct(tonnes_from, tonnes_to),
-                "Au grade bias (%)": _bias_pct(grade_from, grade_to),
-                "Au oz bias (%)": _bias_pct(oz_from, oz_to),
-            }
-        )
+        for panel, group in work.groupby("Panel", observed=True):
+            volume = float(pd.to_numeric(group["volume_from"], errors="coerce").fillna(0).clip(lower=0).sum())
+            tonnes_from = float(pd.to_numeric(group["tonnes_from"], errors="coerce").fillna(0).clip(lower=0).sum())
+            tonnes_to = float(pd.to_numeric(group["tonnes_to"], errors="coerce").fillna(0).clip(lower=0).sum())
+            support_mt = tonnes_to / 1_000_000.0
+            if support_mt < float(minimum_support_mt):
+                continue
+
+            grade_from = _weighted_grade(group, "au_from", "tonnes_from")
+            grade_to = _weighted_grade(group, "au_to", "tonnes_to")
+            oz_from = float(pd.to_numeric(group["au_oz_from"], errors="coerce").fillna(0).sum())
+            oz_to = float(pd.to_numeric(group["au_oz_to"], errors="coerce").fillna(0).sum())
+            rows.append(
+                {
+                    "Panel": panel,
+                    "Transition": transition,
+                    "Initial category": initial_category,
+                    "Later category": later_category,
+                    "Blocks": len(group),
+                    "Volume (Mm3)": volume / 1_000_000.0,
+                    "Initial tonnes (t)": tonnes_from,
+                    "Later tonnes (t)": tonnes_to,
+                    "Later support (Mt)": support_mt,
+                    "Initial Au (g/t)": grade_from,
+                    "Later Au (g/t)": grade_to,
+                    "Initial Au (oz)": oz_from,
+                    "Later Au (oz)": oz_to,
+                    "Tonnes bias (%)": _bias_pct(tonnes_from, tonnes_to),
+                    "Au grade bias (%)": _bias_pct(grade_from, grade_to),
+                    "Au oz bias (%)": _bias_pct(oz_from, oz_to),
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -1125,39 +1153,40 @@ def _wape(initial: pd.Series, benchmark: pd.Series) -> float:
 
 
 def _uncertainty_summary(panel_metrics: pd.DataFrame, tolerance_pct: float) -> pd.DataFrame:
-    """Summarize reliability with weighted metal-risk metrics plus legacy diagnostics.
+    """Summarize accuracy and uncertainty for each classification transition.
 
-    Primary metrics are designed for Measured reliability against the later
-    Grade Control benchmark:
-      - Aggregate Au-oz bias: signed accuracy at cohort scale.
-      - Au-oz WAPE: absolute error weighted by benchmark metal.
-      - Weighted P10/P50/P90: benchmark-Au-oz-weighted distribution of panel bias.
-      - GC Au-oz within tolerance: share of benchmark metal represented by
-        panel cells whose absolute Au-oz bias lies inside the selected band.
+    Primary metrics:
+      - Aggregate Au-oz bias: signed accuracy at transition-cohort scale.
+      - Au-oz WAPE: total absolute Au-oz error divided by later Au ounces.
+      - Weighted P10/P50/P90: distribution of panel Au-oz bias weighted by
+        later Au ounces, so panels carrying more benchmark metal contribute
+        proportionally more to the uncertainty interval.
+      - Later Au-oz within tolerance: share of later benchmark metal contained
+        in panel cells whose absolute Au-oz bias lies inside the selected band.
 
-    The unweighted P90 absolute bias is retained as a secondary diagnostic only.
+    Unweighted statistics are retained only as diagnostics because they assign
+    the same importance to a very small panel cell and a large, metal-rich one.
     """
     if panel_metrics.empty:
         return pd.DataFrame()
+
     rows: list[dict[str, Any]] = []
-    for category in ["Measured", "Indicated"]:
-        group = panel_metrics[panel_metrics["Initial category"].eq(category)].copy()
+    for transition, initial_category, later_category in RELIABILITY_TRANSITIONS:
+        group = panel_metrics[panel_metrics["Transition"].eq(transition)].copy()
         if group.empty:
             continue
 
         tonnes_from = pd.to_numeric(group["Initial tonnes (t)"], errors="coerce")
-        tonnes_to = pd.to_numeric(group["GC tonnes (t)"], errors="coerce")
+        tonnes_to = pd.to_numeric(group["Later tonnes (t)"], errors="coerce")
         oz_from = pd.to_numeric(group["Initial Au (oz)"], errors="coerce")
-        oz_to = pd.to_numeric(group["GC Au (oz)"], errors="coerce")
-        grade_from = pd.to_numeric(group["Initial Au (g/t)"], errors="coerce")
-        grade_to = pd.to_numeric(group["GC Au (g/t)"], errors="coerce")
+        oz_to = pd.to_numeric(group["Later Au (oz)"], errors="coerce")
 
         total_tonnes_from = float(tonnes_from.fillna(0).clip(lower=0).sum())
         total_tonnes_to = float(tonnes_to.fillna(0).clip(lower=0).sum())
         total_oz_from = float(oz_from.fillna(0).clip(lower=0).sum())
         total_oz_to = float(oz_to.fillna(0).clip(lower=0).sum())
         agg_grade_from = _weighted_grade(group, "Initial Au (g/t)", "Initial tonnes (t)")
-        agg_grade_to = _weighted_grade(group, "GC Au (g/t)", "GC tonnes (t)")
+        agg_grade_to = _weighted_grade(group, "Later Au (g/t)", "Later tonnes (t)")
 
         metal_bias = pd.to_numeric(group["Au oz bias (%)"], errors="coerce")
         metal_weights = oz_to.clip(lower=0)
@@ -1166,10 +1195,12 @@ def _uncertainty_summary(panel_metrics: pd.DataFrame, tolerance_pct: float) -> p
         p90 = _weighted_quantile(metal_bias, metal_weights, 0.90)
 
         row: dict[str, Any] = {
-            "Initial category": category,
+            "Transition": transition,
+            "Initial category": initial_category,
+            "Later category": later_category,
             "Panels": len(group),
-            "GC support (Mt)": total_tonnes_to / 1_000_000.0,
-            "GC Au (koz)": total_oz_to / 1_000.0,
+            "Later support (Mt)": total_tonnes_to / 1_000_000.0,
+            "Later Au (koz)": total_oz_to / 1_000.0,
             "Aggregate tonnes bias (%)": _bias_pct(total_tonnes_from, total_tonnes_to),
             "Aggregate Au grade bias (%)": _bias_pct(agg_grade_from, agg_grade_to),
             "Aggregate Au oz bias (%)": _bias_pct(total_oz_from, total_oz_to),
@@ -1178,10 +1209,9 @@ def _uncertainty_summary(panel_metrics: pd.DataFrame, tolerance_pct: float) -> p
             "Weighted P50 Au oz bias (%)": p50,
             "Weighted P90 Au oz bias (%)": p90,
             "Weighted P10-P90 width (%)": p90 - p10 if np.isfinite(p10) and np.isfinite(p90) else np.nan,
-            f"GC Au oz within ±{tolerance_pct:g}% (%)": _weighted_tolerance_share(metal_bias, metal_weights, tolerance_pct),
+            f"Later Au oz within ±{tolerance_pct:g}% (%)": _weighted_tolerance_share(metal_bias, metal_weights, tolerance_pct),
         }
 
-        # Retain the former cell-count-based diagnostics for drill-down only.
         for metric in ["Tonnes bias (%)", "Au grade bias (%)", "Au oz bias (%)"]:
             values = pd.to_numeric(group[metric], errors="coerce").dropna()
             row[f"Median {metric}"] = float(values.median()) if not values.empty else np.nan
@@ -1203,55 +1233,59 @@ def _domain_panel_metrics(
     minimum_support_mt: float,
     stable_domain_only: bool,
 ) -> pd.DataFrame:
+    """Calculate panel-domain reliability for all three maturation transitions."""
     from_col = f"{domain}_from"
     to_col = f"{domain}_to"
     if from_col not in pair.columns:
         return pd.DataFrame()
 
-    work = pair[
-        pair["rescat_from"].isin(["Indicated", "Measured"])
-        & pair["rescat_to"].eq("Grade Control")
-    ].copy()
-    if stable_domain_only and to_col in work.columns:
-        work = work[work[from_col].astype(str).eq(work[to_col].astype(str))].copy()
-    if work.empty:
-        return pd.DataFrame()
-
-    work["Panel"] = _panel_ids(work, sx, sy, sz, origin)
-    work["Domain"] = _clean_domain(work[from_col])
-
     rows: list[dict[str, Any]] = []
-    for (panel, domain_value, category), group in work.groupby(["Panel", "Domain", "rescat_from"], observed=True):
-        tonnes_from = float(pd.to_numeric(group["tonnes_from"], errors="coerce").fillna(0).clip(lower=0).sum())
-        tonnes_to = float(pd.to_numeric(group["tonnes_to"], errors="coerce").fillna(0).clip(lower=0).sum())
-        support_mt = tonnes_to / 1_000_000.0
-        if support_mt < float(minimum_support_mt):
+    for transition, initial_category, later_category in RELIABILITY_TRANSITIONS:
+        work = pair[
+            pair["rescat_from"].eq(initial_category)
+            & pair["rescat_to"].eq(later_category)
+        ].copy()
+        if stable_domain_only and to_col in work.columns:
+            work = work[work[from_col].astype(str).eq(work[to_col].astype(str))].copy()
+        if work.empty:
             continue
 
-        volume = float(pd.to_numeric(group["volume_from"], errors="coerce").fillna(0).clip(lower=0).sum())
-        grade_from = _weighted_grade(group, "au_from", "tonnes_from")
-        grade_to = _weighted_grade(group, "au_to", "tonnes_to")
-        oz_from = float(pd.to_numeric(group["au_oz_from"], errors="coerce").fillna(0).sum())
-        oz_to = float(pd.to_numeric(group["au_oz_to"], errors="coerce").fillna(0).sum())
-        rows.append(
-            {
-                "Panel": panel,
-                "Domain": str(domain_value),
-                "Initial category": category,
-                "Blocks": len(group),
-                "Volume (Mm3)": volume / 1_000_000.0,
-                "Initial tonnes (t)": tonnes_from,
-                "GC tonnes (t)": tonnes_to,
-                "GC support (Mt)": support_mt,
-                "Initial Au (g/t)": grade_from,
-                "GC Au (g/t)": grade_to,
-                "Initial Au (oz)": oz_from,
-                "GC Au (oz)": oz_to,
-                "Tonnes bias (%)": _bias_pct(tonnes_from, tonnes_to),
-                "Au grade bias (%)": _bias_pct(grade_from, grade_to),
-                "Au oz bias (%)": _bias_pct(oz_from, oz_to),
-            }
-        )
+        work["Panel"] = _panel_ids(work, sx, sy, sz, origin)
+        work["Domain"] = _clean_domain(work[from_col])
+
+        for (panel, domain_value), group in work.groupby(["Panel", "Domain"], observed=True):
+            tonnes_from = float(pd.to_numeric(group["tonnes_from"], errors="coerce").fillna(0).clip(lower=0).sum())
+            tonnes_to = float(pd.to_numeric(group["tonnes_to"], errors="coerce").fillna(0).clip(lower=0).sum())
+            support_mt = tonnes_to / 1_000_000.0
+            if support_mt < float(minimum_support_mt):
+                continue
+
+            volume = float(pd.to_numeric(group["volume_from"], errors="coerce").fillna(0).clip(lower=0).sum())
+            grade_from = _weighted_grade(group, "au_from", "tonnes_from")
+            grade_to = _weighted_grade(group, "au_to", "tonnes_to")
+            oz_from = float(pd.to_numeric(group["au_oz_from"], errors="coerce").fillna(0).sum())
+            oz_to = float(pd.to_numeric(group["au_oz_to"], errors="coerce").fillna(0).sum())
+            rows.append(
+                {
+                    "Panel": panel,
+                    "Domain": str(domain_value),
+                    "Transition": transition,
+                    "Initial category": initial_category,
+                    "Later category": later_category,
+                    "Blocks": len(group),
+                    "Volume (Mm3)": volume / 1_000_000.0,
+                    "Initial tonnes (t)": tonnes_from,
+                    "Later tonnes (t)": tonnes_to,
+                    "Later support (Mt)": support_mt,
+                    "Initial Au (g/t)": grade_from,
+                    "Later Au (g/t)": grade_to,
+                    "Initial Au (oz)": oz_from,
+                    "Later Au (oz)": oz_to,
+                    "Tonnes bias (%)": _bias_pct(tonnes_from, tonnes_to),
+                    "Au grade bias (%)": _bias_pct(grade_from, grade_to),
+                    "Au oz bias (%)": _bias_pct(oz_from, oz_to),
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -1259,15 +1293,19 @@ def _domain_uncertainty_summary(metrics: pd.DataFrame, tolerance_pct: float) -> 
     if metrics.empty:
         return pd.DataFrame()
     rows: list[dict[str, Any]] = []
-    for (domain_value, category), group in metrics.groupby(["Domain", "Initial category"], observed=True):
+    for (domain_value, transition), group in metrics.groupby(["Domain", "Transition"], observed=True):
+        spec = next((item for item in RELIABILITY_TRANSITIONS if item[0] == transition), None)
+        initial_category = spec[1] if spec else str(group["Initial category"].iloc[0])
+        later_category = spec[2] if spec else str(group["Later category"].iloc[0])
+
         metal_bias = pd.to_numeric(group["Au oz bias (%)"], errors="coerce")
-        metal_weights = pd.to_numeric(group["GC Au (oz)"], errors="coerce").clip(lower=0)
+        metal_weights = pd.to_numeric(group["Later Au (oz)"], errors="coerce").clip(lower=0)
         oz_from = pd.to_numeric(group["Initial Au (oz)"], errors="coerce")
-        oz_to = pd.to_numeric(group["GC Au (oz)"], errors="coerce")
+        oz_to = pd.to_numeric(group["Later Au (oz)"], errors="coerce")
         tonnes_from = pd.to_numeric(group["Initial tonnes (t)"], errors="coerce")
-        tonnes_to = pd.to_numeric(group["GC tonnes (t)"], errors="coerce")
+        tonnes_to = pd.to_numeric(group["Later tonnes (t)"], errors="coerce")
         grade_from = _weighted_grade(group, "Initial Au (g/t)", "Initial tonnes (t)")
-        grade_to = _weighted_grade(group, "GC Au (g/t)", "GC tonnes (t)")
+        grade_to = _weighted_grade(group, "Later Au (g/t)", "Later tonnes (t)")
 
         p10 = _weighted_quantile(metal_bias, metal_weights, 0.10)
         p50 = _weighted_quantile(metal_bias, metal_weights, 0.50)
@@ -1277,26 +1315,30 @@ def _domain_uncertainty_summary(metrics: pd.DataFrame, tolerance_pct: float) -> 
         rows.append(
             {
                 "Domain": domain_value,
-                "Initial category": category,
+                "Transition": transition,
+                "Initial category": initial_category,
+                "Later category": later_category,
                 "Panel-domain cells": len(group),
-                "GC support (Mt)": float(tonnes_to.fillna(0).clip(lower=0).sum()) / 1_000_000.0,
-                "GC Au (koz)": float(oz_to.fillna(0).clip(lower=0).sum()) / 1_000.0,
+                "Later support (Mt)": float(tonnes_to.fillna(0).clip(lower=0).sum()) / 1_000_000.0,
+                "Later Au (koz)": float(oz_to.fillna(0).clip(lower=0).sum()) / 1_000.0,
                 "Aggregate Au oz bias (%)": _bias_pct(float(oz_from.fillna(0).sum()), float(oz_to.fillna(0).sum())),
                 "Au oz WAPE (%)": _wape(oz_from, oz_to),
                 "Weighted P10 Au oz bias (%)": p10,
                 "Weighted P50 Au oz bias (%)": p50,
                 "Weighted P90 Au oz bias (%)": p90,
                 "Weighted P10-P90 width (%)": p90 - p10 if np.isfinite(p10) and np.isfinite(p90) else np.nan,
-                f"GC Au oz within ±{tolerance_pct:g}% (%)": _weighted_tolerance_share(metal_bias, metal_weights, tolerance_pct),
+                f"Later Au oz within ±{tolerance_pct:g}% (%)": _weighted_tolerance_share(metal_bias, metal_weights, tolerance_pct),
                 "Aggregate Au grade bias (%)": _bias_pct(grade_from, grade_to),
                 "Aggregate tonnes bias (%)": _bias_pct(float(tonnes_from.fillna(0).sum()), float(tonnes_to.fillna(0).sum())),
                 "P90 abs Au oz bias diagnostic (%)": float(finite_metal.abs().quantile(0.90)) if not finite_metal.empty else np.nan,
             }
         )
-    table = pd.DataFrame(rows)
-    if not table.empty:
-        table = table.sort_values(["Au oz WAPE (%)", "GC support (Mt)"], ascending=[False, False], kind="stable")
-    return table
+    order = {name: idx for idx, (name, _, _) in enumerate(RELIABILITY_TRANSITIONS)}
+    result = pd.DataFrame(rows)
+    if not result.empty:
+        result["__order__"] = result["Transition"].map(order).fillna(99)
+        result = result.sort_values(["Domain", "__order__"], kind="stable").drop(columns="__order__").reset_index(drop=True)
+    return result
 
 
 def _domain_transition(pair: pd.DataFrame, domain: str, top_n: int = 12) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -1358,28 +1400,47 @@ def _support_sensitivity_table(
     minimum_support_mt: float,
     tolerance_pct: float,
 ) -> pd.DataFrame:
+    """Return a long-form sensitivity table by panel geometry and transition."""
     rows: list[dict[str, Any]] = []
     for sx, sy, sz in PANEL_PRESETS:
         support = _panel_support_distribution(models[reference_label], common_index, sx, sy, sz, origin)
         cohort = _panel_cohort_metrics(pair, sx, sy, sz, origin, minimum_support_mt)
         reliability = _uncertainty_summary(cohort, tolerance_pct)
-        row: dict[str, Any] = {
+        base = {
             "Panel geometry": f"{sx}×{sy}×{sz} m",
             "Panels": len(support),
             "Median support (Mt)": float(support["Tonnes (Mt)"].median()) if not support.empty else np.nan,
             "P25 support (Mt)": float(support["Tonnes (Mt)"].quantile(0.25)) if not support.empty else np.nan,
             "P75 support (Mt)": float(support["Tonnes (Mt)"].quantile(0.75)) if not support.empty else np.nan,
         }
-        for category in ["Measured", "Indicated"]:
-            matched = reliability[reliability["Initial category"].eq(category)] if not reliability.empty else pd.DataFrame()
-            row[f"{category} cells"] = int(matched["Panels"].iloc[0]) if not matched.empty else 0
-            row[f"{category} Aggregate Au oz bias (%)"] = float(matched["Aggregate Au oz bias (%)"].iloc[0]) if not matched.empty else np.nan
-            row[f"{category} Au oz WAPE (%)"] = float(matched["Au oz WAPE (%)"].iloc[0]) if not matched.empty else np.nan
-            row[f"{category} Weighted P10 Au oz bias (%)"] = float(matched["Weighted P10 Au oz bias (%)"].iloc[0]) if not matched.empty else np.nan
-            row[f"{category} Weighted P90 Au oz bias (%)"] = float(matched["Weighted P90 Au oz bias (%)"].iloc[0]) if not matched.empty else np.nan
-            row[f"{category} GC Au oz within ±{tolerance_pct:g}% (%)"] = float(matched[f"GC Au oz within ±{tolerance_pct:g}% (%)"].iloc[0]) if not matched.empty else np.nan
-        rows.append(row)
+        for transition, _, _ in RELIABILITY_TRANSITIONS:
+            matched = reliability[reliability["Transition"].eq(transition)] if not reliability.empty else pd.DataFrame()
+            row = dict(base)
+            row["Transition"] = transition
+            if matched.empty:
+                row.update({
+                    "Transition cells": 0,
+                    "Aggregate Au oz bias (%)": np.nan,
+                    "Au oz WAPE (%)": np.nan,
+                    "Weighted P10 Au oz bias (%)": np.nan,
+                    "Weighted P50 Au oz bias (%)": np.nan,
+                    "Weighted P90 Au oz bias (%)": np.nan,
+                    f"Later Au oz within ±{tolerance_pct:g}% (%)": np.nan,
+                })
+            else:
+                item = matched.iloc[0]
+                row.update({
+                    "Transition cells": int(item["Panels"]),
+                    "Aggregate Au oz bias (%)": float(item["Aggregate Au oz bias (%)"]),
+                    "Au oz WAPE (%)": float(item["Au oz WAPE (%)"]),
+                    "Weighted P10 Au oz bias (%)": float(item["Weighted P10 Au oz bias (%)"]),
+                    "Weighted P50 Au oz bias (%)": float(item["Weighted P50 Au oz bias (%)"]),
+                    "Weighted P90 Au oz bias (%)": float(item["Weighted P90 Au oz bias (%)"]),
+                    f"Later Au oz within ±{tolerance_pct:g}% (%)": float(item[f"Later Au oz within ±{tolerance_pct:g}% (%)"]),
+                })
+            rows.append(row)
     return pd.DataFrame(rows)
+
 
 def _render_data_tab(
     models: dict[str, pd.DataFrame],
@@ -1459,7 +1520,7 @@ def _render_conversion_tab(
     st.subheader("ResCat Conversion")
     st.caption("Volume-weighted block-to-block transition matrices using CATEG_GC only. Conversion is not assumed to be sequential: Indicated or Inferred material may move directly to Grade Control.")
     st.markdown(
-        """<div class="rescat-note"><b>Important:</b> conversion to Grade Control is descriptive, not a standalone measure of classification quality, because it also reflects where Grade Control drilling was executed. Reliability is evaluated separately in the <b>Meas Reliability</b> tab using later Grade Control as the benchmark state.</div>""",
+        """<div class="rescat-note"><b>Important:</b> conversion percentages describe how category volumes move between snapshots; they do not by themselves quantify how much tonnes, grade or metal changed. The <b>Meas Reliability</b> tab evaluates those changes separately for I → M, M → GC and I → GC.</div>""",
         unsafe_allow_html=True,
     )
 
@@ -1575,46 +1636,60 @@ def _render_measured_reliability_tab(
 ) -> None:
     st.subheader("Meas Reliability")
     st.caption(
-        "Grade Control is the later benchmark state. This analysis tests how accurately and consistently "
-        "the earlier Measured and Indicated classifications predicted the same material once it reached Grade Control."
+        "This analysis quantifies how much the estimate changes as blocks move to a better-informed resource category. "
+        "The three core paths are Indicated → Measured, Measured → Grade Control, and Indicated → Grade Control."
     )
     st.markdown(
         """
         <div class="rescat-interpretation">
-            <b>Primary reliability framework</b><br>
-            <b>Aggregate Au-content bias</b> measures overall accuracy; values close to 0% are better.<br>
-            <b>Au-content WAPE</b> measures absolute uncertainty without allowing positive and negative errors to cancel; lower is better.<br>
-            <b>Weighted P10–P90 bias</b> shows the central 80% uncertainty interval, weighting each panel cell by later Grade Control Au ounces; a narrower interval centered near 0% is better.<br>
-            <b>GC Au ounces within tolerance</b> is the percentage of later benchmark metal represented by panel cells inside the selected ± tolerance; higher is better.
+            <b>Study objective.</b> The purpose is not to prove that Measured performs better than Indicated. That is expected from the denser drilling used to support Measured. The purpose is to <b>measure the actual change</b> in tonnes, Au grade and Au content as information matures.<br><br>
+            <b>M → GC</b> is the primary test of how much a Measured estimate changes when the same material later reaches the Grade Control information state.<br>
+            <b>I → M</b> quantifies how much an Indicated estimate changes when it later becomes Measured.<br>
+            <b>I → GC</b> quantifies the direct change from Indicated to Grade Control where GC drilling was executed before an intermediate Measured snapshot.<br><br>
+            For every path, the <b>later category is the benchmark</b> for the calculation.
         </div>
         """,
         unsafe_allow_html=True,
     )
+    st.markdown(
+        """
+        <div class="rescat-interpretation">
+            <b>Primary reliability metrics</b><br>
+            <b>Aggregate Au-content bias</b> measures overall signed change; values close to 0% indicate little overall change.<br>
+            <b>Au-content WAPE</b> measures the total absolute change without allowing positive and negative local errors to cancel; lower is better.<br>
+            <b>Weighted P10–P90 bias</b> describes the central metal-weighted uncertainty interval. Each panel cell is weighted by the <b>Au ounces in the later category</b>, so cells containing more benchmark metal have more influence.<br>
+            <b>Later Au ounces within tolerance</b> is the percentage of later-category metal represented by panel cells whose Au-content change is inside the selected ± tolerance; higher is better.<br><br>
+            Unweighted panel statistics are retained only as diagnostics because they give the same influence to a very small cell and a large metal-rich cell.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     from_label, to_label = _pair_selectors(labels, "rescat_gc_reliability")
     sx, sy, sz, minimum_support_mt, tolerance_pct = panel_settings
     pair = _pair_frame(models, common_index, from_label, to_label)
 
     summary = _cohort_summary(pair)
     if summary.empty:
-        st.info("No Indicated/Measured blocks in the initial snapshot reach Grade Control in the selected later snapshot.")
+        st.info("No I → M, M → GC or I → GC blocks are available for the selected snapshot pair.")
         return
 
-    st.markdown("#### Aggregate cohort comparison")
+    st.markdown("#### Aggregate transition comparison")
     st.caption(
-        "This table compares the complete initial Measured or Indicated cohort with the same blocks in the later Grade Control benchmark. "
-        "It is the primary accuracy check, but it does not by itself measure local dispersion because positive and negative panel errors can offset each other."
+        "Each row contains only blocks that follow the stated category transition between the selected snapshots. "
+        "Bias is calculated as (initial − later) / later × 100, so a positive value means the earlier estimate was higher than the later benchmark."
     )
     st.dataframe(
         summary.style.format({
             "Volume (Mm3)": "{:,.3f}",
             "Initial tonnes (Mt)": "{:,.3f}",
-            "GC tonnes (Mt)": "{:,.3f}",
+            "Later tonnes (Mt)": "{:,.3f}",
             "Tonnes bias (%)": "{:,.2f}%",
             "Initial Au (g/t)": "{:,.3f}",
-            "GC Au (g/t)": "{:,.3f}",
+            "Later Au (g/t)": "{:,.3f}",
             "Au grade bias (%)": "{:,.2f}%",
             "Initial Au (oz)": "{:,.0f}",
-            "GC Au (oz)": "{:,.0f}",
+            "Later Au (oz)": "{:,.0f}",
             "Au oz bias (%)": "{:,.2f}%",
         }),
         use_container_width=True,
@@ -1623,56 +1698,58 @@ def _render_measured_reliability_tab(
 
     st.markdown("#### Fixed-panel reliability — primary metrics")
     st.caption(
-        f"Panel geometry: {sx:g} × {sy:g} × {sz:g} m. Minimum later-GC support: {minimum_support_mt:g} Mt per panel/category cell. "
-        f"Reference tolerance: ±{tolerance_pct:g}%. Metal-weighted statistics use later Grade Control Au ounces as weights."
+        f"Panel geometry: {sx:g} × {sy:g} × {sz:g} m. Minimum later-category support: {minimum_support_mt:g} Mt per panel/transition cell. "
+        f"Reference tolerance: ±{tolerance_pct:g}%. Weighted statistics use later-category Au ounces as weights."
     )
     panel_metrics = _panel_cohort_metrics(pair, sx, sy, sz, origin, minimum_support_mt)
     if panel_metrics.empty:
-        st.info("No panel/category cells meet the selected support threshold.")
+        st.info("No panel/transition cells meet the selected support threshold.")
         return
 
     reliability = _uncertainty_summary(panel_metrics, tolerance_pct)
     primary_columns = [
+        "Transition",
         "Initial category",
+        "Later category",
         "Panels",
-        "GC support (Mt)",
-        "GC Au (koz)",
+        "Later support (Mt)",
+        "Later Au (koz)",
         "Aggregate Au oz bias (%)",
         "Au oz WAPE (%)",
         "Weighted P10 Au oz bias (%)",
         "Weighted P50 Au oz bias (%)",
         "Weighted P90 Au oz bias (%)",
-        f"GC Au oz within ±{tolerance_pct:g}% (%)",
+        f"Later Au oz within ±{tolerance_pct:g}% (%)",
     ]
     primary = reliability[[column for column in primary_columns if column in reliability.columns]].copy()
     st.dataframe(
         primary.style.format({
-            "GC support (Mt)": "{:,.3f}",
-            "GC Au (koz)": "{:,.1f}",
+            "Later support (Mt)": "{:,.3f}",
+            "Later Au (koz)": "{:,.1f}",
             "Aggregate Au oz bias (%)": "{:,.2f}%",
             "Au oz WAPE (%)": "{:,.2f}%",
             "Weighted P10 Au oz bias (%)": "{:,.2f}%",
             "Weighted P50 Au oz bias (%)": "{:,.2f}%",
             "Weighted P90 Au oz bias (%)": "{:,.2f}%",
-            f"GC Au oz within ±{tolerance_pct:g}% (%)": "{:,.1f}%",
+            f"Later Au oz within ±{tolerance_pct:g}% (%)": "{:,.1f}%",
         }),
         use_container_width=True,
         hide_index=True,
     )
 
-    # Accuracy and absolute uncertainty.
+    # Accuracy and WAPE by transition.
     chart_rows: list[dict[str, Any]] = []
     coverage_rows: list[dict[str, Any]] = []
     for _, row in reliability.iterrows():
-        category = str(row["Initial category"])
+        transition = str(row["Transition"])
         chart_rows.extend([
-            {"Initial category": category, "Metric": "Aggregate bias", "Value (%)": float(row.get("Aggregate Au oz bias (%)", np.nan))},
-            {"Initial category": category, "Metric": "WAPE", "Value (%)": float(row.get("Au oz WAPE (%)", np.nan))},
+            {"Transition": transition, "Metric": "Aggregate bias", "Value (%)": float(row.get("Aggregate Au oz bias (%)", np.nan))},
+            {"Transition": transition, "Metric": "WAPE", "Value (%)": float(row.get("Au oz WAPE (%)", np.nan))},
         ])
         coverage_rows.append(
             {
-                "Initial category": category,
-                "GC Au oz within tolerance (%)": float(row.get(f"GC Au oz within ±{tolerance_pct:g}% (%)", np.nan)),
+                "Transition": transition,
+                "Later Au oz within tolerance (%)": float(row.get(f"Later Au oz within ±{tolerance_pct:g}% (%)", np.nan)),
             }
         )
 
@@ -1683,11 +1760,11 @@ def _render_measured_reliability_tab(
             accuracy_df,
             x="Metric",
             y="Value (%)",
-            color="Initial category",
+            color="Transition",
             barmode="group",
-            category_orders={"Initial category": ["Measured", "Indicated"]},
-            color_discrete_map=RESCAT_COLORS,
-            title=f"Au-content accuracy and absolute uncertainty — {from_label} → {to_label}",
+            category_orders={"Transition": [item[0] for item in RELIABILITY_TRANSITIONS]},
+            color_discrete_map=TRANSITION_COLORS,
+            title=f"Au-content change and absolute uncertainty — {from_label} → {to_label}",
             text="Value (%)",
         )
         fig.update_traces(
@@ -1695,58 +1772,57 @@ def _render_measured_reliability_tab(
             textposition="outside",
             marker_line_color="white",
             marker_line_width=1.0,
-            hovertemplate="Initial class: %{fullData.name}<br>Metric: %{x}<br>Value: %{y:.1f}%<extra></extra>",
+            hovertemplate="Transition: %{fullData.name}<br>Metric: %{x}<br>Value: %{y:.1f}%<extra></extra>",
         )
         fig.add_hline(y=0, line_width=1, line_dash="dash", line_color="#59656D")
-        _apply_barrick_layout(fig, height=500, yaxis_title="Au-content error (%)", legend_title="Initial category")
+        _apply_barrick_layout(fig, height=500, yaxis_title="Au-content change (%)", legend_title="Transition")
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
         coverage_df = pd.DataFrame(coverage_rows)
         fig = px.bar(
             coverage_df,
-            x="Initial category",
-            y="GC Au oz within tolerance (%)",
-            color="Initial category",
-            category_orders={"Initial category": ["Measured", "Indicated"]},
-            color_discrete_map=RESCAT_COLORS,
-            title=f"Later GC Au ounces represented within ±{tolerance_pct:g}%",
-            text="GC Au oz within tolerance (%)",
+            x="Transition",
+            y="Later Au oz within tolerance (%)",
+            color="Transition",
+            category_orders={"Transition": [item[0] for item in RELIABILITY_TRANSITIONS]},
+            color_discrete_map=TRANSITION_COLORS,
+            title=f"Later-category Au ounces represented within ±{tolerance_pct:g}%",
+            text="Later Au oz within tolerance (%)",
         )
         fig.update_traces(
             texttemplate="%{text:.1f}%",
             textposition="outside",
             marker_line_color="white",
             marker_line_width=1.0,
-            hovertemplate="Initial class: %{x}<br>GC Au oz within tolerance: %{y:.1f}%<extra></extra>",
+            hovertemplate="Transition: %{x}<br>Later Au oz within tolerance: %{y:.1f}%<extra></extra>",
         )
-        _apply_barrick_layout(fig, height=500, yaxis_title="GC Au ounces within tolerance (%)")
+        _apply_barrick_layout(fig, height=500, yaxis_title="Later Au ounces within tolerance (%)")
         fig.update_yaxes(range=[0, 105], ticksuffix="%")
         fig.update_layout(showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
-    # Metal-weighted P10-P90 interval.
     st.markdown("#### Metal-weighted Au-content bias interval")
     st.caption(
-        "Each panel/category cell contributes according to its later Grade Control Au ounces. The horizontal segment spans weighted P10 to P90, and the marker is weighted P50."
+        "For each transition, the horizontal segment spans weighted P10 to P90 and the marker is weighted P50. "
+        "Weights are later-category Au ounces; therefore, a large metal-rich panel contributes more than a small low-metal panel."
     )
-    interval = reliability.copy()
     fig = go.Figure()
-    for _, row in interval.iterrows():
-        category = str(row["Initial category"])
+    for _, row in reliability.iterrows():
+        transition = str(row["Transition"])
         p10 = float(row.get("Weighted P10 Au oz bias (%)", np.nan))
         p50 = float(row.get("Weighted P50 Au oz bias (%)", np.nan))
         p90 = float(row.get("Weighted P90 Au oz bias (%)", np.nan))
         if not (np.isfinite(p10) and np.isfinite(p50) and np.isfinite(p90)):
             continue
-        color = RESCAT_COLORS.get(category, BARRICK_GRAY)
+        color = TRANSITION_COLORS.get(transition, BARRICK_GRAY)
         fig.add_trace(
             go.Scatter(
                 x=[p10, p90],
-                y=[category, category],
+                y=[transition, transition],
                 mode="lines",
                 line=dict(color=color, width=8),
-                name=category,
+                name=transition,
                 showlegend=False,
                 hoverinfo="skip",
             )
@@ -1754,13 +1830,13 @@ def _render_measured_reliability_tab(
         fig.add_trace(
             go.Scatter(
                 x=[p50],
-                y=[category],
+                y=[transition],
                 mode="markers",
                 marker=dict(color="white", line=dict(color=color, width=3), size=13),
-                name=category,
+                name=transition,
                 showlegend=False,
                 customdata=[[p10, p90]],
-                hovertemplate="Initial class: %{y}<br>Weighted P10: %{customdata[0]:.1f}%<br>Weighted P50: %{x:.1f}%<br>Weighted P90: %{customdata[1]:.1f}%<extra></extra>",
+                hovertemplate="Transition: %{y}<br>Weighted P10: %{customdata[0]:.1f}%<br>Weighted P50: %{x:.1f}%<br>Weighted P90: %{customdata[1]:.1f}%<extra></extra>",
             )
         )
     fig.add_vrect(x0=-tolerance_pct, x1=tolerance_pct, fillcolor=_hex_rgba(BARRICK_GOLD, 0.10), line_width=0)
@@ -1769,17 +1845,17 @@ def _render_measured_reliability_tab(
     fig.add_vline(x=tolerance_pct, line_width=1.2, line_dash="dot", line_color=BARRICK_GOLD)
     _apply_barrick_layout(
         fig,
-        height=390,
-        title=f"Weighted P10–P90 Au-content bias — {from_label} → {to_label}",
-        xaxis_title="Au-content bias relative to later GC (%)",
-        yaxis_title="Initial category",
+        height=430,
+        title=f"Weighted P10–P90 Au-content change — {from_label} → {to_label}",
+        xaxis_title="Au-content bias relative to later category (%)",
+        yaxis_title="Classification transition",
     )
-    fig.update_yaxes(categoryorder="array", categoryarray=["Measured", "Indicated"])
+    fig.update_yaxes(categoryorder="array", categoryarray=[item[0] for item in RELIABILITY_TRANSITIONS])
     st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("Secondary diagnostics — unweighted panel-cell statistics", expanded=False):
         diagnostic_columns = [
-            "Initial category",
+            "Transition",
             "Panels",
             "Median Tonnes bias (%)",
             "P90 abs Tonnes bias (%)",
@@ -1792,10 +1868,10 @@ def _render_measured_reliability_tab(
             f"Cell count within ±{tolerance_pct:g}% Au oz bias (%)",
         ]
         diagnostics = reliability[[column for column in diagnostic_columns if column in reliability.columns]].copy()
-        formatters = {column: "{:,.2f}%" for column in diagnostics.columns if column not in {"Initial category", "Panels"}}
+        formatters = {column: "{:,.2f}%" for column in diagnostics.columns if column not in {"Transition", "Panels"}}
         st.dataframe(diagnostics.style.format(formatters), use_container_width=True, hide_index=True)
         st.caption(
-            "These statistics give every occupied panel cell equal weight. They are retained for diagnostic review, but they are not the primary reliability metrics because very small cells can produce extreme percentage errors."
+            "These diagnostics give every occupied panel cell equal weight. A small one-block cell therefore has the same statistical influence as a large panel cell, which can make unweighted P90 values very sensitive to low-support outliers."
         )
 
     with st.expander("Panel-level reliability values", expanded=False):
@@ -1803,12 +1879,12 @@ def _render_measured_reliability_tab(
             panel_metrics.style.format({
                 "Volume (Mm3)": "{:,.3f}",
                 "Initial tonnes (t)": "{:,.0f}",
-                "GC tonnes (t)": "{:,.0f}",
-                "GC support (Mt)": "{:,.3f}",
+                "Later tonnes (t)": "{:,.0f}",
+                "Later support (Mt)": "{:,.3f}",
                 "Initial Au (g/t)": "{:,.3f}",
-                "GC Au (g/t)": "{:,.3f}",
+                "Later Au (g/t)": "{:,.3f}",
                 "Initial Au (oz)": "{:,.1f}",
-                "GC Au (oz)": "{:,.1f}",
+                "Later Au (oz)": "{:,.1f}",
                 "Tonnes bias (%)": "{:,.2f}%",
                 "Au grade bias (%)": "{:,.2f}%",
                 "Au oz bias (%)": "{:,.2f}%",
@@ -1828,7 +1904,7 @@ def _render_domain_tab(
     st.subheader("Domain Uncertainty")
     st.caption(
         "Mettype, Lithology and Alteration are uncertainty strata inside the fixed spatial panels. "
-        "The objective is to identify domains where material classified as Measured has historically shown low uncertainty against later Grade Control, supporting lower-risk future planning when full GC drilling is not available."
+        "The same three classification transitions (I → M, M → GC and I → GC) are evaluated within each geological domain."
     )
 
     from_label, to_label = _pair_selectors(labels, "rescat_domain")
@@ -1863,32 +1939,32 @@ def _render_domain_tab(
         stable_domain_only,
     )
     if metrics.empty:
-        st.info("No panel-domain cells meet the selected category and support criteria.")
+        st.info("No panel-domain-transition cells meet the selected category and support criteria.")
     else:
         summary = _domain_uncertainty_summary(metrics, tolerance_pct)
-        st.markdown("#### Reliability vs later GC benchmark by initial geological domain")
+        st.markdown("#### Classification change by initial geological domain")
         st.caption(
-            f"Domain is assigned from the initial snapshot ({from_label}). Reliability uses only blocks classified as Indicated or Measured initially and Grade Control in {to_label}."
+            f"The geological domain is assigned from the initial snapshot ({from_label}). For each transition, the later category in {to_label} is the benchmark used for bias, WAPE, weighted percentiles and tolerance coverage."
         )
         st.markdown(
             f"""
             <div class="rescat-interpretation">
-                <b>Planning interpretation:</b> focus first on the <b>Measured</b> rows. Lower-risk domains should combine a small aggregate Au-content bias, low Au-content WAPE, a narrow weighted P10–P90 interval centered near zero, a high share of later GC ounces inside ±{tolerance_pct:g}%, adequate benchmark support, and a stable geological interpretation.
+                <b>How to use this table.</b> For future planning decisions, the <b>M → GC</b> rows are the direct evidence of how much Measured material historically changed when more intensive Grade Control information became available. The <b>I → M</b> and <b>I → GC</b> rows provide the corresponding change from the Indicated state. A lower-risk domain should show small aggregate change, low WAPE, a relatively narrow weighted P10–P90 interval, high later-metal coverage inside ±{tolerance_pct:g}%, adequate support, and a reasonably stable geological interpretation.
             </div>
             """,
             unsafe_allow_html=True,
         )
         st.dataframe(
             summary.style.format({
-                "GC support (Mt)": "{:,.3f}",
-                "GC Au (koz)": "{:,.1f}",
+                "Later support (Mt)": "{:,.3f}",
+                "Later Au (koz)": "{:,.1f}",
                 "Aggregate Au oz bias (%)": "{:,.2f}%",
                 "Au oz WAPE (%)": "{:,.2f}%",
                 "Weighted P10 Au oz bias (%)": "{:,.2f}%",
                 "Weighted P50 Au oz bias (%)": "{:,.2f}%",
                 "Weighted P90 Au oz bias (%)": "{:,.2f}%",
                 "Weighted P10-P90 width (%)": "{:,.2f}%",
-                f"GC Au oz within ±{tolerance_pct:g}% (%)": "{:,.1f}%",
+                f"Later Au oz within ±{tolerance_pct:g}% (%)": "{:,.1f}%",
                 "Aggregate Au grade bias (%)": "{:,.2f}%",
                 "Aggregate tonnes bias (%)": "{:,.2f}%",
                 "P90 abs Au oz bias diagnostic (%)": "{:,.2f}%",
@@ -1905,39 +1981,38 @@ def _render_domain_tab(
                     plot_table,
                     x="Domain",
                     y="Au oz WAPE (%)",
-                    color="Initial category",
+                    color="Transition",
                     barmode="group",
-                    category_orders={"Initial category": ["Measured", "Indicated"]},
-                    color_discrete_map=RESCAT_COLORS,
-                    title=f"Au-content WAPE by {domain_label}",
-                    hover_data={"Panel-domain cells": True, "GC support (Mt)": ":.2f", "GC Au (koz)": ":.1f"},
+                    category_orders={"Transition": [item[0] for item in RELIABILITY_TRANSITIONS]},
+                    color_discrete_map=TRANSITION_COLORS,
+                    title=f"Au-content WAPE by {domain_label} and transition",
                 )
                 fig.update_traces(
                     marker_line_color="white",
                     marker_line_width=1.0,
-                    hovertemplate="Domain: %{x}<br>%{fullData.name}<br>Au-content WAPE: %{y:.1f}%<extra></extra>",
+                    hovertemplate="Domain: %{x}<br>Transition: %{fullData.name}<br>Au-content WAPE: %{y:.1f}%<extra></extra>",
                 )
-                _apply_barrick_layout(fig, height=520, yaxis_title="Au-content WAPE (%)", legend_title="Initial category")
+                _apply_barrick_layout(fig, height=520, yaxis_title="Au-content WAPE (%)", legend_title="Transition")
                 fig.update_xaxes(tickangle=-35)
                 st.plotly_chart(fig, use_container_width=True)
             with c2:
-                coverage_col = f"GC Au oz within ±{tolerance_pct:g}% (%)"
+                coverage_col = f"Later Au oz within ±{tolerance_pct:g}% (%)"
                 fig = px.bar(
                     plot_table,
                     x="Domain",
                     y=coverage_col,
-                    color="Initial category",
+                    color="Transition",
                     barmode="group",
-                    category_orders={"Initial category": ["Measured", "Indicated"]},
-                    color_discrete_map=RESCAT_COLORS,
-                    title=f"GC Au ounces within ±{tolerance_pct:g}% by {domain_label}",
+                    category_orders={"Transition": [item[0] for item in RELIABILITY_TRANSITIONS]},
+                    color_discrete_map=TRANSITION_COLORS,
+                    title=f"Later Au ounces within ±{tolerance_pct:g}% by {domain_label}",
                 )
                 fig.update_traces(
                     marker_line_color="white",
                     marker_line_width=1.0,
-                    hovertemplate="Domain: %{x}<br>%{fullData.name}<br>GC Au oz within tolerance: %{y:.1f}%<extra></extra>",
+                    hovertemplate="Domain: %{x}<br>Transition: %{fullData.name}<br>Later Au oz within tolerance: %{y:.1f}%<extra></extra>",
                 )
-                _apply_barrick_layout(fig, height=520, yaxis_title="GC Au ounces within tolerance (%)", legend_title="Initial category")
+                _apply_barrick_layout(fig, height=520, yaxis_title="Later Au ounces within tolerance (%)", legend_title="Transition")
                 fig.update_yaxes(range=[0, 105], ticksuffix="%")
                 fig.update_xaxes(tickangle=-35)
                 st.plotly_chart(fig, use_container_width=True)
@@ -1963,7 +2038,6 @@ def _render_domain_tab(
             st.dataframe((matrix / 1_000_000.0).style.format("{:,.3f}"), use_container_width=True)
 
 
-
 def _render_panel_tab(
     models: dict[str, pd.DataFrame],
     common_index: pd.MultiIndex,
@@ -1974,7 +2048,7 @@ def _render_panel_tab(
     st.subheader("Panel Support")
     st.caption(
         "Panels are fixed regular spatial support containers; they are not mine-plan panels. "
-        "The same XYZ-based geometry is applied to every snapshot and geological domain."
+        "The same XYZ-based geometry is applied to every snapshot, transition and geological domain."
     )
     sx, sy, sz, minimum_support_mt, tolerance_pct = panel_settings
     reference_label = st.selectbox("Reference snapshot for support distribution", labels, index=0, key="rescat_panel_reference")
@@ -2017,28 +2091,22 @@ def _render_panel_tab(
             "Median support (Mt)": "{:,.2f}",
             "P25 support (Mt)": "{:,.2f}",
             "P75 support (Mt)": "{:,.2f}",
-            "Measured Aggregate Au oz bias (%)": "{:,.2f}%",
-            "Measured Au oz WAPE (%)": "{:,.2f}%",
-            "Measured Weighted P10 Au oz bias (%)": "{:,.2f}%",
-            "Measured Weighted P90 Au oz bias (%)": "{:,.2f}%",
-            f"Measured GC Au oz within ±{tolerance_pct:g}% (%)": "{:,.1f}%",
-            "Indicated Aggregate Au oz bias (%)": "{:,.2f}%",
-            "Indicated Au oz WAPE (%)": "{:,.2f}%",
-            "Indicated Weighted P10 Au oz bias (%)": "{:,.2f}%",
-            "Indicated Weighted P90 Au oz bias (%)": "{:,.2f}%",
-            f"Indicated GC Au oz within ±{tolerance_pct:g}% (%)": "{:,.1f}%",
+            "Aggregate Au oz bias (%)": "{:,.2f}%",
+            "Au oz WAPE (%)": "{:,.2f}%",
+            "Weighted P10 Au oz bias (%)": "{:,.2f}%",
+            "Weighted P50 Au oz bias (%)": "{:,.2f}%",
+            "Weighted P90 Au oz bias (%)": "{:,.2f}%",
+            f"Later Au oz within ±{tolerance_pct:g}% (%)": "{:,.1f}%",
         }),
         use_container_width=True,
         hide_index=True,
     )
     st.markdown(
         """
-        <div class="rescat-note"><b>Interpretation:</b> use the sensitivity table to verify that the relative separation between Measured and Indicated is not an artifact of one arbitrary panel size. A robust classification system should show consistently lower WAPE, a tighter metal-weighted P10–P90 interval, and higher GC-ounce tolerance coverage for Measured than for Indicated across reasonable spatial supports.</div>
+        <div class="rescat-note"><b>Interpretation:</b> support sensitivity tests whether the estimated change for I → M, M → GC and I → GC is robust to a reasonable range of fixed panel sizes. If a conclusion disappears when panel size changes slightly, it should not be treated as a stable property of the classification system or geological domain.</div>
         """,
         unsafe_allow_html=True,
     )
-
-
 
 
 def _build_rescat_report_package(
@@ -2050,12 +2118,7 @@ def _build_rescat_report_package(
     origin: tuple[float, float, float],
     mapping: dict[str, str | None],
 ) -> dict[str, Any]:
-    """Build a compact report payload for the independent Report Builder.
-
-    The payload stores report-ready summary tables and the minimum chart data
-    needed to rebuild publication-quality static figures without retaining the
-    full uploaded block-model dataframes in report state.
-    """
+    """Build report-ready tables and chart data for ResCat Stability."""
     if len(labels) < 2:
         return {}
 
@@ -2065,16 +2128,15 @@ def _build_rescat_report_package(
     volume, pct = _transition_tables(pair, RESCAT_FOCUS_ORDER, "volume_from")
 
     tables: list[dict[str, Any]] = []
-
     settings = pd.DataFrame(
         [
             {"Parameter": "Snapshots loaded", "Value": len(labels)},
             {"Parameter": "Initial snapshot", "Value": initial_label},
-            {"Parameter": "Later benchmark snapshot", "Value": later_label},
+            {"Parameter": "Later snapshot", "Value": later_label},
             {"Parameter": "Common XYZ blocks", "Value": len(common_index)},
             {"Parameter": "Category source", "Value": "CATEG_GC"},
             {"Parameter": "Panel geometry", "Value": f"{sx:g}×{sy:g}×{sz:g} m"},
-            {"Parameter": "Minimum benchmark GC support/cell", "Value": f"{minimum_support_mt:g} Mt"},
+            {"Parameter": "Minimum later support/cell", "Value": f"{minimum_support_mt:g} Mt"},
             {"Parameter": "Reference tolerance", "Value": f"±{tolerance_pct:g}%"},
         ]
     )
@@ -2084,8 +2146,9 @@ def _build_rescat_report_package(
             "table": settings,
             "notes": [
                 "Snapshots are aligned block-to-block using XYZ centroids.",
-                "The oldest loaded snapshot is the initial state and the most recent loaded snapshot is the later benchmark state.",
+                "The automatic report uses the oldest loaded snapshot as the initial state and the most recent loaded snapshot as the later state.",
                 "CATEG_GC is the sole resource-category variable used by this module.",
+                "Reliability is quantified for I → M, M → GC and I → GC; the later category is the benchmark for each transition.",
             ],
         }
     )
@@ -2115,7 +2178,7 @@ def _build_rescat_report_package(
             {
                 "title": "ResCat Conversion - Transition Volume (Mm3)",
                 "table": (volume / 1_000_000.0).reset_index().rename(columns={"rescat_from": "Initial category", "index": "Initial category"}),
-                "notes": [f"Initial snapshot: {initial_label}.", f"Later benchmark snapshot: {later_label}."],
+                "notes": [f"Initial snapshot: {initial_label}.", f"Later snapshot: {later_label}."],
             }
         )
     if not pct.empty:
@@ -2165,11 +2228,11 @@ def _build_rescat_report_package(
         if not cohort.empty:
             tables.append(
                 {
-                    "title": "Meas Reliability - Aggregate Cohort Comparison",
+                    "title": "Meas Reliability - Aggregate Transition Comparison",
                     "table": cohort,
                     "notes": [
-                        "Later Grade Control is used as the benchmark state.",
-                        "Positive bias means the earlier estimate overpredicted the later Grade Control result; negative bias means underprediction.",
+                        "The three core paths are I → M, M → GC and I → GC.",
+                        "For every path, the later category is the benchmark. Positive bias means the earlier estimate was higher than the later estimate; negative bias means it was lower.",
                     ],
                 }
             )
@@ -2179,12 +2242,13 @@ def _build_rescat_report_package(
         if not uncertainty.empty:
             tables.append(
                 {
-                    "title": "Meas Reliability - Fixed Panel Summary",
+                    "title": "Meas Reliability - Fixed Panel Transition Summary",
                     "table": uncertainty,
                     "notes": [
                         f"Fixed panel geometry: {sx:g}×{sy:g}×{sz:g} m.",
                         f"Reference tolerance: ±{tolerance_pct:g}%.",
-                        "Measured reliability is assessed against the later Grade Control benchmark and compared with Indicated as a reference population.",
+                        "Weighted percentiles and tolerance coverage use Au ounces in the later category as weights.",
+                        "Unweighted P90 values are retained as diagnostics only because every panel cell receives equal statistical weight regardless of support.",
                     ],
                 }
             )
@@ -2192,16 +2256,7 @@ def _build_rescat_report_package(
         for domain_label, domain in (("Mettype", "mettype"), ("Lithology", "lithology"), ("Alteration", "alteration")):
             if not mapping.get(domain):
                 continue
-            metrics = _domain_panel_metrics(
-                pair,
-                domain,
-                sx,
-                sy,
-                sz,
-                origin,
-                minimum_support_mt,
-                False,
-            )
+            metrics = _domain_panel_metrics(pair, domain, sx, sy, sz, origin, minimum_support_mt, False)
             summary = _domain_uncertainty_summary(metrics, tolerance_pct)
             if not summary.empty:
                 domain_summaries[domain_label] = summary
@@ -2211,7 +2266,7 @@ def _build_rescat_report_package(
                         "table": summary,
                         "notes": [
                             f"{domain_label} is assigned from the initial snapshot.",
-                            "Reliability uses blocks initially classified as Measured or Indicated that are Grade Control in the later benchmark snapshot.",
+                            "I → M, M → GC and I → GC are reported independently; the later category is the benchmark for each path.",
                             "Domain subvolumes retain their actual support; equal domain volumes are not imposed.",
                         ],
                     }
@@ -2228,21 +2283,13 @@ def _build_rescat_report_package(
                 )
 
         support = _panel_support_distribution(models[initial_label], common_index, sx, sy, sz, origin)
-        sensitivity = _support_sensitivity_table(
-            models,
-            common_index,
-            initial_label,
-            pair,
-            origin,
-            minimum_support_mt,
-            tolerance_pct,
-        )
+        sensitivity = _support_sensitivity_table(models, common_index, initial_label, pair, origin, minimum_support_mt, tolerance_pct)
         if not sensitivity.empty:
             tables.append(
                 {
-                    "title": "Panel Support - Sensitivity",
+                    "title": "Panel Support - Sensitivity by Transition",
                     "table": sensitivity,
-                    "notes": ["Support sensitivity checks whether the separation between Measured and Indicated is robust across reasonable fixed spatial panel sizes."],
+                    "notes": ["Support sensitivity checks I → M, M → GC and I → GC across the same reasonable fixed panel sizes."],
                 }
             )
 
@@ -2268,6 +2315,7 @@ def _build_rescat_report_package(
         },
     }
 
+
 def render_rescat_stability() -> None:
     """Render the dedicated ResCat Stability workflow."""
     _apply_rescat_styles()
@@ -2277,7 +2325,7 @@ def render_rescat_stability() -> None:
 
     st.markdown(
         """
-        <div class="rescat-note"><b>Scope:</b> this module is independent of the mine-plan Year/Phase/Destination filters. Upload the undepleted model snapshots directly here. The analytical population is aligned by XYZ centroid and <b>CATEG_GC</b> is the sole resource-category source. The oldest loaded snapshot is treated as the initial state and the most recent loaded snapshot is treated as the benchmark later state.</div>
+        <div class="rescat-note"><b>Scope:</b> this module is independent of the mine-plan Year/Phase/Destination filters. Upload the undepleted model snapshots directly here. The analytical population is aligned by XYZ centroid and <b>CATEG_GC</b> is the sole resource-category source. Pair selectors default to the oldest loaded snapshot as Initial and the most recent snapshot as Later, but the user can select any valid earlier → later pair.</div>
         """,
         unsafe_allow_html=True,
     )
@@ -2337,12 +2385,12 @@ def render_rescat_stability() -> None:
         sz = float(p3.number_input("Panel Z (m)", min_value=10.0, value=30.0, step=10.0, key="rescat_panel_z"))
         minimum_support_mt = float(
             p4.number_input(
-                "Min benchmark GC support/cell (Mt)",
+                "Min later support/cell (Mt)",
                 min_value=0.0,
                 value=0.0,
                 step=0.05,
                 key="rescat_min_support_mt",
-                help="Minimum later-GC tonnage required for a panel/category or panel/domain/category cell to enter uncertainty statistics. Use 0 to retain every occupied cell.",
+                help="Minimum tonnage in the later/better-informed state required for a panel or panel-domain cell to enter uncertainty statistics. Use 0 to retain every occupied cell.",
             )
         )
         tolerance_pct = float(

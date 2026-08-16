@@ -8004,6 +8004,11 @@ _RESCAT_BLUE = "#03547C"
 _RESCAT_GOLD = "#A39161"
 _RESCAT_ORANGE = "#FDB813"
 _RESCAT_GRAY = "#C7C8CA"
+_RESCAT_TRANSITION_COLORS = {
+    "I → M": _RESCAT_BLUE,
+    "M → GC": _RESCAT_ORANGE,
+    "I → GC": _RESCAT_GOLD,
+}
 
 
 def _rescat_report_package() -> dict[str, Any]:
@@ -8279,10 +8284,10 @@ def _rescat_grouped_bar_png(
 
 
 def _rescat_reliability_bar_png(summary: pd.DataFrame, tolerance_pct: float, mode: str) -> bytes | None:
-    if not isinstance(summary, pd.DataFrame) or summary.empty:
+    if not isinstance(summary, pd.DataFrame) or summary.empty or "Transition" not in summary.columns:
         return None
-    categories = [value for value in ["Measured", "Indicated"] if value in summary.get("Initial category", pd.Series(dtype=str)).astype(str).tolist()]
-    if not categories:
+    transitions = [value for value in ["I → M", "M → GC", "I → GC"] if value in summary["Transition"].astype(str).tolist()]
+    if not transitions:
         return None
     try:
         import matplotlib
@@ -8295,51 +8300,53 @@ def _rescat_reliability_bar_png(summary: pd.DataFrame, tolerance_pct: float, mod
             metrics = ["Aggregate Au oz bias (%)", "Au oz WAPE (%)"]
             labels = ["Aggregate bias", "WAPE"]
             x = np.arange(len(metrics))
-            width = 0.34
-            for idx, category in enumerate(categories):
-                row = summary[summary["Initial category"].astype(str).eq(category)].iloc[0]
+            width = 0.22
+            for idx, transition in enumerate(transitions):
+                row = summary[summary["Transition"].astype(str).eq(transition)].iloc[0]
                 values = [float(row.get(metric, float("nan"))) for metric in metrics]
-                positions = x + (idx - (len(categories)-1)/2.0) * width
+                positions = x + (idx - (len(transitions)-1)/2.0) * width
                 bars = ax.bar(
                     positions,
                     values,
                     width,
-                    label=category,
-                    color=_RESCAT_REPORT_COLORS.get(category, _RESCAT_GRAY),
+                    label=transition,
+                    color=_RESCAT_TRANSITION_COLORS.get(transition, _RESCAT_GRAY),
                     edgecolor="white",
                     linewidth=1.0,
                 )
                 for bar, value in zip(bars, values, strict=True):
                     if pd.notna(value):
                         va = "bottom" if value >= 0 else "top"
-                        ax.text(bar.get_x()+bar.get_width()/2.0, bar.get_height(), f"{value:.1f}%", ha="center", va=va, fontsize=9.5, color="#26323A")
+                        ax.text(bar.get_x()+bar.get_width()/2.0, bar.get_height(), f"{value:.1f}%", ha="center", va=va, fontsize=9.2, color="#26323A")
             ax.axhline(0, color="#59656D", linewidth=1.0, linestyle="--")
             ax.set_xticks(x)
             ax.set_xticklabels(labels)
-            ylabel = "Au-content error (%)"
-            title = "Measured reliability - Au-content accuracy and absolute uncertainty"
+            ylabel = "Au-content change (%)"
+            title = "Classification reliability - Au-content change and absolute uncertainty"
+            xlabel = "Metric"
         else:
-            metric = f"GC Au oz within ±{tolerance_pct:g}% (%)"
-            x = np.arange(len(categories))
+            metric = f"Later Au oz within ±{tolerance_pct:g}% (%)"
+            x = np.arange(len(transitions))
             values = []
-            for category in categories:
-                row = summary[summary["Initial category"].astype(str).eq(category)].iloc[0]
+            for transition in transitions:
+                row = summary[summary["Transition"].astype(str).eq(transition)].iloc[0]
                 values.append(float(row.get(metric, float("nan"))))
-            colors = [_RESCAT_REPORT_COLORS.get(category, _RESCAT_GRAY) for category in categories]
+            colors = [_RESCAT_TRANSITION_COLORS.get(transition, _RESCAT_GRAY) for transition in transitions]
             bars = ax.bar(x, values, 0.62, color=colors, edgecolor="white", linewidth=1.0)
             for bar, value in zip(bars, values, strict=True):
                 if pd.notna(value):
                     ax.text(bar.get_x()+bar.get_width()/2.0, bar.get_height(), f"{value:.1f}%", ha="center", va="bottom", fontsize=9.5, color="#26323A")
             ax.set_xticks(x)
-            ax.set_xticklabels(categories)
+            ax.set_xticklabels(transitions)
             ax.set_ylim(0, 105)
-            ylabel = "GC Au ounces within tolerance (%)"
-            title = f"Measured reliability - GC Au ounces within ±{tolerance_pct:g}%"
+            ylabel = "Later Au ounces within tolerance (%)"
+            title = f"Classification reliability - later Au ounces within ±{tolerance_pct:g}%"
+            xlabel = "Transition"
 
         ax.set_title(title, fontsize=18.5, fontweight="bold", color="#26323A", pad=20)
-        _style_report_axis(ax, "Metric" if mode == "accuracy" else "Initial category", ylabel, rotation=0)
+        _style_report_axis(ax, xlabel, ylabel, rotation=0)
         if mode == "accuracy":
-            _place_report_legend(ax, ncol=2)
+            _place_report_legend(ax, ncol=3)
         fig.tight_layout()
         return _rescat_save_figure(fig)
     except Exception:
@@ -8350,7 +8357,7 @@ def _rescat_reliability_interval_png(summary: pd.DataFrame, tolerance_pct: float
     if not isinstance(summary, pd.DataFrame) or summary.empty:
         return None
     required = {
-        "Initial category",
+        "Transition",
         "Weighted P10 Au oz bias (%)",
         "Weighted P50 Au oz bias (%)",
         "Weighted P90 Au oz bias (%)",
@@ -8363,30 +8370,30 @@ def _rescat_reliability_interval_png(summary: pd.DataFrame, tolerance_pct: float
         import matplotlib.pyplot as plt
         import numpy as np
 
-        categories = [value for value in ["Measured", "Indicated"] if value in summary["Initial category"].astype(str).tolist()]
-        if not categories:
+        transitions = [value for value in ["I → M", "M → GC", "I → GC"] if value in summary["Transition"].astype(str).tolist()]
+        if not transitions:
             return None
-        fig, ax = plt.subplots(figsize=(10.8, 5.4))
-        y = np.arange(len(categories))
+        fig, ax = plt.subplots(figsize=(10.8, 5.8))
+        y = np.arange(len(transitions))
         ax.axvspan(-float(tolerance_pct), float(tolerance_pct), color=_RESCAT_GOLD, alpha=0.10, linewidth=0)
         ax.axvline(-float(tolerance_pct), color=_RESCAT_GOLD, linewidth=1.2, linestyle=":")
         ax.axvline(0, color="#59656D", linewidth=1.0, linestyle="--")
         ax.axvline(float(tolerance_pct), color=_RESCAT_GOLD, linewidth=1.2, linestyle=":")
-        for idx, category in enumerate(categories):
-            row = summary[summary["Initial category"].astype(str).eq(category)].iloc[0]
+        for idx, transition in enumerate(transitions):
+            row = summary[summary["Transition"].astype(str).eq(transition)].iloc[0]
             p10 = float(row["Weighted P10 Au oz bias (%)"])
             p50 = float(row["Weighted P50 Au oz bias (%)"])
             p90 = float(row["Weighted P90 Au oz bias (%)"])
-            color = _RESCAT_REPORT_COLORS.get(category, _RESCAT_GRAY)
+            color = _RESCAT_TRANSITION_COLORS.get(transition, _RESCAT_GRAY)
             ax.plot([p10, p90], [idx, idx], color=color, linewidth=8, solid_capstyle="round")
             ax.scatter([p50], [idx], s=90, facecolor="white", edgecolor=color, linewidth=2.4, zorder=3)
             ax.text(p10, idx + 0.14, f"P10 {p10:.1f}%", ha="center", va="bottom", fontsize=9, color="#26323A")
             ax.text(p90, idx + 0.14, f"P90 {p90:.1f}%", ha="center", va="bottom", fontsize=9, color="#26323A")
         ax.set_yticks(y)
-        ax.set_yticklabels(categories)
+        ax.set_yticklabels(transitions)
         ax.invert_yaxis()
-        ax.set_title("Measured reliability - weighted P10-P90 Au-content bias", fontsize=18.5, fontweight="bold", color="#26323A", pad=20)
-        _style_report_axis(ax, "Au-content bias relative to later GC (%)", "Initial category", rotation=0)
+        ax.set_title("Classification reliability - weighted P10-P90 Au-content change", fontsize=18.5, fontweight="bold", color="#26323A", pad=20)
+        _style_report_axis(ax, "Au-content bias relative to later category (%)", "Classification transition", rotation=0)
         fig.tight_layout()
         return _rescat_save_figure(fig)
     except Exception:
@@ -8396,7 +8403,7 @@ def _rescat_reliability_interval_png(summary: pd.DataFrame, tolerance_pct: float
 def _rescat_domain_bar_png(summary: pd.DataFrame, domain_label: str, tolerance_pct: float) -> bytes | None:
     if not isinstance(summary, pd.DataFrame) or summary.empty:
         return None
-    required = {"Domain", "Initial category", "Au oz WAPE (%)"}
+    required = {"Domain", "Transition", "Au oz WAPE (%)", "Later support (Mt)"}
     if not required.issubset(summary.columns):
         return None
     try:
@@ -8405,23 +8412,23 @@ def _rescat_domain_bar_png(summary: pd.DataFrame, domain_label: str, tolerance_p
         import matplotlib.pyplot as plt
         import numpy as np
 
-        domains = summary.groupby("Domain", observed=True)["GC support (Mt)"].sum().sort_values(ascending=False).head(12).index.astype(str).tolist()
-        categories = ["Measured", "Indicated"]
+        domains = summary.groupby("Domain", observed=True)["Later support (Mt)"].sum().sort_values(ascending=False).head(12).index.astype(str).tolist()
+        transitions = [value for value in ["I → M", "M → GC", "I → GC"] if value in summary["Transition"].astype(str).tolist()]
         x = np.arange(len(domains))
-        width = 0.36
-        fig, ax = plt.subplots(figsize=(max(11.0, len(domains)*0.85), 6.5))
-        for idx, category in enumerate(categories):
+        width = 0.72 / max(len(transitions), 1)
+        fig, ax = plt.subplots(figsize=(max(11.0, len(domains)*0.9), 6.5))
+        for idx, transition in enumerate(transitions):
             values = []
             for domain in domains:
-                matched = summary[(summary["Domain"].astype(str).eq(domain)) & (summary["Initial category"].astype(str).eq(category))]
+                matched = summary[(summary["Domain"].astype(str).eq(domain)) & (summary["Transition"].astype(str).eq(transition))]
                 values.append(float(matched["Au oz WAPE (%)"].iloc[0]) if not matched.empty else float("nan"))
-            positions = x + (idx - 0.5) * width
-            ax.bar(positions, values, width, label=category, color=_RESCAT_REPORT_COLORS[category], edgecolor="white", linewidth=1.0)
+            positions = x + (idx - (len(transitions)-1)/2.0) * width
+            ax.bar(positions, values, width, label=transition, color=_RESCAT_TRANSITION_COLORS.get(transition, _RESCAT_GRAY), edgecolor="white", linewidth=1.0)
         ax.set_xticks(x)
         ax.set_xticklabels(domains)
-        ax.set_title(f"Au-content WAPE by {domain_label}", fontsize=18.5, fontweight="bold", color="#26323A", pad=20)
+        ax.set_title(f"Au-content WAPE by {domain_label} and transition", fontsize=18.5, fontweight="bold", color="#26323A", pad=20)
         _style_report_axis(ax, domain_label, "Au-content WAPE (%)", rotation=35)
-        _place_report_legend(ax, ncol=2)
+        _place_report_legend(ax, ncol=3)
         fig.tight_layout()
         return _rescat_save_figure(fig)
     except Exception:
@@ -8512,19 +8519,19 @@ def _rescat_report_charts() -> list[dict[str, Any]]:
 
     uncertainty = data.get("uncertainty", pd.DataFrame())
     add(
-        "Meas Reliability - Accuracy and WAPE",
+        "Meas Reliability - Transition Accuracy and WAPE",
         _rescat_reliability_bar_png(uncertainty, tolerance, "accuracy"),
-        ["Aggregate Au-content bias measures overall accuracy; Au-content WAPE measures absolute uncertainty without cancellation."],
+        ["I → M, M → GC and I → GC are evaluated independently. Aggregate Au-content bias measures signed change; WAPE measures absolute change without cancellation."],
     )
     add(
-        "Meas Reliability - Weighted P10-P90",
+        "Meas Reliability - Transition Weighted P10-P90",
         _rescat_reliability_interval_png(uncertainty, tolerance),
-        ["The P10-P90 interval is weighted by later Grade Control Au ounces; a narrower interval centered near zero indicates greater reliability."],
+        ["The P10-P90 interval is weighted by Au ounces in the later category for each transition; a narrower interval centered near zero indicates less observed change."],
     )
     add(
-        "Meas Reliability - GC Ounces Within Tolerance",
+        "Meas Reliability - Later Ounces Within Tolerance",
         _rescat_reliability_bar_png(uncertainty, tolerance, "coverage"),
-        [f"This is the share of later Grade Control Au ounces represented by panel cells within ±{tolerance:g}% Au-content bias."],
+        [f"This is the share of later-category Au ounces represented by panel cells within ±{tolerance:g}% Au-content bias."],
     )
 
     domain_summaries = data.get("domain_summaries", {})
@@ -8533,7 +8540,7 @@ def _rescat_report_charts() -> list[dict[str, Any]]:
             add(
                 f"Meas Reliability by {domain_label}",
                 _rescat_domain_bar_png(summary, str(domain_label), tolerance),
-                ["Later Grade Control is the benchmark state; lower Au-content WAPE indicates lower observed absolute uncertainty."],
+                ["The later category is the benchmark for each transition; lower Au-content WAPE indicates lower observed absolute change."],
             )
 
     domain_stability = data.get("domain_stability", {})
