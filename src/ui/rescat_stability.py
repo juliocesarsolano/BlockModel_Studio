@@ -1139,17 +1139,130 @@ def _weighted_tolerance_share(values: pd.Series, weights: pd.Series, tolerance_p
     return 100.0 * inside / total_weight
 
 
+def _weighted_ape(initial: pd.Series, benchmark: pd.Series, weights: pd.Series) -> float:
+    """Return a weighted absolute percentage error in percent.
+
+    Each valid cell contributes its absolute percentage error
+    |initial - benchmark| / benchmark, weighted by the supplied positive
+    benchmark-support vector.  This makes the weighting basis explicit:
+    later tonnes for tonnes and grade, later Au ounces for Au content.
+    """
+    table = pd.DataFrame(
+        {
+            "initial": pd.to_numeric(initial, errors="coerce"),
+            "benchmark": pd.to_numeric(benchmark, errors="coerce"),
+            "weight": pd.to_numeric(weights, errors="coerce"),
+        }
+    ).dropna()
+    table = table[
+        np.isfinite(table["initial"])
+        & np.isfinite(table["benchmark"])
+        & np.isfinite(table["weight"])
+        & table["benchmark"].gt(0)
+        & table["weight"].gt(0)
+    ].copy()
+    if table.empty:
+        return float("nan")
+    total_weight = float(table["weight"].sum())
+    if total_weight <= 0:
+        return float("nan")
+    ape = (table["initial"] - table["benchmark"]).abs() / table["benchmark"]
+    return 100.0 * float((ape * table["weight"]).sum()) / total_weight
+
+
 def _wape(initial: pd.Series, benchmark: pd.Series) -> float:
-    initial_values = pd.to_numeric(initial, errors="coerce")
-    benchmark_values = pd.to_numeric(benchmark, errors="coerce")
-    valid = initial_values.notna() & benchmark_values.notna() & np.isfinite(initial_values) & np.isfinite(benchmark_values) & benchmark_values.gt(0)
-    if not valid.any():
-        return float("nan")
-    denominator = float(benchmark_values.loc[valid].sum())
-    if denominator <= 0:
-        return float("nan")
-    numerator = float((initial_values.loc[valid] - benchmark_values.loc[valid]).abs().sum())
-    return 100.0 * numerator / denominator
+    """Backward-compatible WAPE for additive quantities.
+
+    Using the benchmark itself as the weight is algebraically equivalent to
+    sum(|initial - benchmark|) / sum(benchmark).
+    """
+    return _weighted_ape(initial, benchmark, benchmark)
+
+
+def _component_reliability_summary(panel_metrics: pd.DataFrame, tolerance_pct: float) -> pd.DataFrame:
+    """Return tonnes, Au-grade and Au-content diagnostics for each transition.
+
+    Weighting follows the physical support of each variable:
+      - Tonnes: later tonnes.
+      - Au grade: later tonnes (grade is an intensive variable).
+      - Au ounces: later Au ounces.
+    """
+    if panel_metrics.empty:
+        return pd.DataFrame()
+
+    rows: list[dict[str, Any]] = []
+    for transition, initial_category, later_category in RELIABILITY_TRANSITIONS:
+        group = panel_metrics[panel_metrics["Transition"].eq(transition)].copy()
+        if group.empty:
+            continue
+
+        tonnes_from = pd.to_numeric(group["Initial tonnes (t)"], errors="coerce")
+        tonnes_to = pd.to_numeric(group["Later tonnes (t)"], errors="coerce")
+        grade_from = pd.to_numeric(group["Initial Au (g/t)"], errors="coerce")
+        grade_to = pd.to_numeric(group["Later Au (g/t)"], errors="coerce")
+        oz_from = pd.to_numeric(group["Initial Au (oz)"], errors="coerce")
+        oz_to = pd.to_numeric(group["Later Au (oz)"], errors="coerce")
+
+        total_tonnes_from = float(tonnes_from.fillna(0).clip(lower=0).sum())
+        total_tonnes_to = float(tonnes_to.fillna(0).clip(lower=0).sum())
+        total_oz_from = float(oz_from.fillna(0).clip(lower=0).sum())
+        total_oz_to = float(oz_to.fillna(0).clip(lower=0).sum())
+        aggregate_grade_from = _weighted_grade(group, "Initial Au (g/t)", "Initial tonnes (t)")
+        aggregate_grade_to = _weighted_grade(group, "Later Au (g/t)", "Later tonnes (t)")
+
+        specs = (
+            (
+                "Tonnes",
+                tonnes_from,
+                tonnes_to,
+                tonnes_to.clip(lower=0),
+                pd.to_numeric(group["Tonnes bias (%)"], errors="coerce"),
+                _bias_pct(total_tonnes_from, total_tonnes_to),
+                "Later tonnes",
+            ),
+            (
+                "Au grade",
+                grade_from,
+                grade_to,
+                tonnes_to.clip(lower=0),
+                pd.to_numeric(group["Au grade bias (%)"], errors="coerce"),
+                _bias_pct(aggregate_grade_from, aggregate_grade_to),
+                "Later tonnes",
+            ),
+            (
+                "Au ounces",
+                oz_from,
+                oz_to,
+                oz_to.clip(lower=0),
+                pd.to_numeric(group["Au oz bias (%)"], errors="coerce"),
+                _bias_pct(total_oz_from, total_oz_to),
+                "Later Au ounces",
+            ),
+        )
+
+        for variable, initial_values, later_values, weights, bias_values, aggregate_bias, weight_basis in specs:
+            p10 = _weighted_quantile(bias_values, weights, 0.10)
+            p50 = _weighted_quantile(bias_values, weights, 0.50)
+            p90 = _weighted_quantile(bias_values, weights, 0.90)
+            rows.append(
+                {
+                    "Transition": transition,
+                    "Initial category": initial_category,
+                    "Later category": later_category,
+                    "Variable": variable,
+                    "Weight basis": weight_basis,
+                    "Panels": len(group),
+                    "Aggregate bias (%)": aggregate_bias,
+                    "WAPE (%)": _weighted_ape(initial_values, later_values, weights),
+                    "Weighted P10 bias (%)": p10,
+                    "Weighted P50 bias (%)": p50,
+                    "Weighted P90 bias (%)": p90,
+                    "Weighted P10-P90 width (%)": p90 - p10 if np.isfinite(p10) and np.isfinite(p90) else np.nan,
+                    f"Later basis within ±{tolerance_pct:g}% (%)": _weighted_tolerance_share(bias_values, weights, tolerance_pct),
+                }
+            )
+
+    return pd.DataFrame(rows)
 
 
 def _uncertainty_summary(panel_metrics: pd.DataFrame, tolerance_pct: float) -> pd.DataFrame:
@@ -1737,6 +1850,45 @@ def _render_measured_reliability_tab(
         hide_index=True,
     )
 
+    component_summary = _component_reliability_summary(panel_metrics, tolerance_pct)
+    with st.expander("Component Reliability Diagnostics — tonnes, grade and Au content", expanded=False):
+        st.caption(
+            "This table decomposes the integrated Au-ounce result into tonnes and Au grade. "
+            "Tonnes bias and Au-grade bias are weighted by later-category tonnes; Au-ounce bias is weighted by later-category Au ounces. "
+            "For grade, tonnes are used because grade is an intensive variable and should not be weighted by the grade value itself."
+        )
+        if component_summary.empty:
+            st.info("No component diagnostics are available for the selected panel/support settings.")
+        else:
+            component_columns = [
+                "Transition",
+                "Variable",
+                "Weight basis",
+                "Panels",
+                "Aggregate bias (%)",
+                "WAPE (%)",
+                "Weighted P10 bias (%)",
+                "Weighted P50 bias (%)",
+                "Weighted P90 bias (%)",
+                f"Later basis within ±{tolerance_pct:g}% (%)",
+            ]
+            component_display = component_summary[[column for column in component_columns if column in component_summary.columns]].copy()
+            st.dataframe(
+                component_display.style.format({
+                    "Aggregate bias (%)": "{:,.2f}%",
+                    "WAPE (%)": "{:,.2f}%",
+                    "Weighted P10 bias (%)": "{:,.2f}%",
+                    "Weighted P50 bias (%)": "{:,.2f}%",
+                    "Weighted P90 bias (%)": "{:,.2f}%",
+                    f"Later basis within ±{tolerance_pct:g}% (%)": "{:,.1f}%",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                f"Within ±{tolerance_pct:g}% uses the same physical weight basis shown in the table: later tonnes for Tonnes/Au grade and later Au ounces for Au content."
+            )
+
     # Accuracy and WAPE by transition.
     chart_rows: list[dict[str, Any]] = []
     coverage_rows: list[dict[str, Any]] = []
@@ -2249,6 +2401,20 @@ def _build_rescat_report_package(
                         f"Reference tolerance: ±{tolerance_pct:g}%.",
                         "Weighted percentiles and tolerance coverage use Au ounces in the later category as weights.",
                         "Unweighted P90 values are retained as diagnostics only because every panel cell receives equal statistical weight regardless of support.",
+                    ],
+                }
+            )
+
+        component_summary = _component_reliability_summary(panel_metrics, tolerance_pct)
+        if not component_summary.empty:
+            tables.append(
+                {
+                    "title": "Meas Reliability - Component Diagnostics",
+                    "table": component_summary,
+                    "notes": [
+                        "The table decomposes reliability into tonnes, Au grade and Au ounces for I → M, M → GC and I → GC.",
+                        "Tonnes and Au-grade metrics are weighted by later-category tonnes; Au-ounce metrics are weighted by later-category Au ounces.",
+                        f"Tolerance coverage reports the share of the relevant later weight basis contained in panel cells within ±{tolerance_pct:g}% bias.",
                     ],
                 }
             )
