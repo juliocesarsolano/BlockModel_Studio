@@ -18,6 +18,9 @@ Design principles
   they do not define or modify the fixed spatial panel geometry.
 - Fixed regular panels are optional analytical support containers and are
   independent of the mine plan.
+- Weighted percentiles use an inverse weighted empirical CDF (no interpolation
+  across cells), and optional minimum later-Au support can be applied to avoid
+  unstable percentage diagnostics from negligible-metal denominators.
 
 Author / context
 ----------------
@@ -1046,12 +1049,14 @@ def _panel_cohort_metrics(
     sz: float,
     origin: tuple[float, float, float],
     minimum_support_mt: float,
+    minimum_later_au_koz: float,
 ) -> pd.DataFrame:
     """Calculate panel-level change for I→M, M→GC and I→GC.
 
-    The fixed panel geometry is identical for every transition. Minimum support
-    is evaluated on the later/better-informed state so the same rule is valid
-    whether the benchmark category is Measured or Grade Control.
+    The fixed panel geometry is identical for every transition. Minimum
+    tonnage and minimum Au-metal support are evaluated on the later/better-
+    informed state so the same rule is valid whether the benchmark category
+    is Measured or Grade Control.
     """
     rows: list[dict[str, Any]] = []
     for transition, initial_category, later_category in RELIABILITY_TRANSITIONS:
@@ -1075,6 +1080,8 @@ def _panel_cohort_metrics(
             grade_to = _weighted_grade(group, "au_to", "tonnes_to")
             oz_from = float(pd.to_numeric(group["au_oz_from"], errors="coerce").fillna(0).sum())
             oz_to = float(pd.to_numeric(group["au_oz_to"], errors="coerce").fillna(0).sum())
+            if (oz_to / 1_000.0) < float(minimum_later_au_koz):
+                continue
             rows.append(
                 {
                     "Panel": panel,
@@ -1099,7 +1106,15 @@ def _panel_cohort_metrics(
 
 
 def _weighted_quantile(values: pd.Series, weights: pd.Series, quantile: float) -> float:
-    """Return a weighted quantile using strictly positive finite weights."""
+    """Return the inverse weighted empirical CDF for positive finite weights.
+
+    The result is the first observed value at which cumulative weight reaches
+    the requested quantile.  For Au-content reliability, this means (for
+    example) that weighted P90 is the panel-cell bias below which at least
+    90% of the later-category Au ounces are accumulated.  No interpolation is
+    performed across panel cells, so tiny-weight outliers cannot pull a
+    percentile toward an unobserved intermediate value.
+    """
     table = pd.DataFrame(
         {
             "value": pd.to_numeric(values, errors="coerce"),
@@ -1115,11 +1130,12 @@ def _weighted_quantile(values: pd.Series, weights: pd.Series, quantile: float) -
     total_weight = float(weights_sorted.sum())
     if total_weight <= 0:
         return float("nan")
-    # Midpoint plotting positions provide a smooth weighted percentile and
-    # avoid the lower-step behavior of a raw weighted empirical CDF.
-    positions = (np.cumsum(weights_sorted) - 0.5 * weights_sorted) / total_weight
     q = float(np.clip(quantile, 0.0, 1.0))
-    return float(np.interp(q, positions, values_sorted, left=values_sorted[0], right=values_sorted[-1]))
+    target = q * total_weight
+    cumulative = np.cumsum(weights_sorted)
+    index = int(np.searchsorted(cumulative, target, side="left"))
+    index = min(max(index, 0), len(values_sorted) - 1)
+    return float(values_sorted[index])
 
 
 def _weighted_tolerance_share(values: pd.Series, weights: pd.Series, tolerance_pct: float) -> float:
@@ -1344,6 +1360,7 @@ def _domain_panel_metrics(
     sz: float,
     origin: tuple[float, float, float],
     minimum_support_mt: float,
+    minimum_later_au_koz: float,
     stable_domain_only: bool,
 ) -> pd.DataFrame:
     """Calculate panel-domain reliability for all three maturation transitions."""
@@ -1378,6 +1395,8 @@ def _domain_panel_metrics(
             grade_to = _weighted_grade(group, "au_to", "tonnes_to")
             oz_from = float(pd.to_numeric(group["au_oz_from"], errors="coerce").fillna(0).sum())
             oz_to = float(pd.to_numeric(group["au_oz_to"], errors="coerce").fillna(0).sum())
+            if (oz_to / 1_000.0) < float(minimum_later_au_koz):
+                continue
             rows.append(
                 {
                     "Panel": panel,
@@ -1511,13 +1530,14 @@ def _support_sensitivity_table(
     pair: pd.DataFrame,
     origin: tuple[float, float, float],
     minimum_support_mt: float,
+    minimum_later_au_koz: float,
     tolerance_pct: float,
 ) -> pd.DataFrame:
     """Return a long-form sensitivity table by panel geometry and transition."""
     rows: list[dict[str, Any]] = []
     for sx, sy, sz in PANEL_PRESETS:
         support = _panel_support_distribution(models[reference_label], common_index, sx, sy, sz, origin)
-        cohort = _panel_cohort_metrics(pair, sx, sy, sz, origin, minimum_support_mt)
+        cohort = _panel_cohort_metrics(pair, sx, sy, sz, origin, minimum_support_mt, minimum_later_au_koz)
         reliability = _uncertainty_summary(cohort, tolerance_pct)
         base = {
             "Panel geometry": f"{sx}×{sy}×{sz} m",
@@ -1744,7 +1764,7 @@ def _render_measured_reliability_tab(
     models: dict[str, pd.DataFrame],
     common_index: pd.MultiIndex,
     labels: list[str],
-    panel_settings: tuple[float, float, float, float, float],
+    panel_settings: tuple[float, float, float, float, float, float],
     origin: tuple[float, float, float],
 ) -> None:
     st.subheader("Meas Reliability")
@@ -1770,7 +1790,7 @@ def _render_measured_reliability_tab(
             <b>Primary reliability metrics</b><br>
             <b>Aggregate Au-content bias</b> measures overall signed change; values close to 0% indicate little overall change.<br>
             <b>Au-content WAPE</b> measures the total absolute change without allowing positive and negative local errors to cancel; lower is better.<br>
-            <b>Weighted P10–P90 bias</b> describes the central metal-weighted uncertainty interval. Each panel cell is weighted by the <b>Au ounces in the later category</b>, so cells containing more benchmark metal have more influence.<br>
+            <b>Weighted P10–P90 bias</b> describes the central metal-weighted uncertainty interval. Panel cells are ordered by bias and the <b>Au ounces in the later category</b> are accumulated; P10, P50 and P90 are the first observed biases where cumulative later metal reaches 10%, 50% and 90%, respectively. No interpolation is performed across panel cells.<br>
             <b>Later Au ounces within tolerance</b> is the percentage of later-category metal represented by panel cells whose Au-content change is inside the selected ± tolerance; higher is better.<br><br>
             Unweighted panel statistics are retained only as diagnostics because they give the same influence to a very small cell and a large metal-rich cell.
         </div>
@@ -1779,7 +1799,7 @@ def _render_measured_reliability_tab(
     )
 
     from_label, to_label = _pair_selectors(labels, "rescat_gc_reliability")
-    sx, sy, sz, minimum_support_mt, tolerance_pct = panel_settings
+    sx, sy, sz, minimum_support_mt, minimum_later_au_koz, tolerance_pct = panel_settings
     pair = _pair_frame(models, common_index, from_label, to_label)
 
     summary = _cohort_summary(pair)
@@ -1811,10 +1831,10 @@ def _render_measured_reliability_tab(
 
     st.markdown("#### Fixed-panel reliability — primary metrics")
     st.caption(
-        f"Panel geometry: {sx:g} × {sy:g} × {sz:g} m. Minimum later-category support: {minimum_support_mt:g} Mt per panel/transition cell. "
-        f"Reference tolerance: ±{tolerance_pct:g}%. Weighted statistics use later-category Au ounces as weights."
+        f"Panel geometry: {sx:g} × {sy:g} × {sz:g} m. Minimum later-category support: {minimum_support_mt:g} Mt and {minimum_later_au_koz:g} koz Au per panel/transition cell. "
+        f"Reference tolerance: ±{tolerance_pct:g}%. Weighted statistics use later-category Au ounces as weights; weighted percentiles use the cumulative weighted empirical distribution without interpolation across panel cells."
     )
-    panel_metrics = _panel_cohort_metrics(pair, sx, sy, sz, origin, minimum_support_mt)
+    panel_metrics = _panel_cohort_metrics(pair, sx, sy, sz, origin, minimum_support_mt, minimum_later_au_koz)
     if panel_metrics.empty:
         st.info("No panel/transition cells meet the selected support threshold.")
         return
@@ -2050,7 +2070,7 @@ def _render_domain_tab(
     models: dict[str, pd.DataFrame],
     common_index: pd.MultiIndex,
     labels: list[str],
-    panel_settings: tuple[float, float, float, float, float],
+    panel_settings: tuple[float, float, float, float, float, float],
     origin: tuple[float, float, float],
 ) -> None:
     st.subheader("Domain Uncertainty")
@@ -2077,8 +2097,12 @@ def _render_domain_tab(
         help="When enabled, reliability is calculated only where the selected categorical domain has the same value in both snapshots.",
     )
     top_n = int(control3.number_input("Top classes in domain matrix", min_value=3, max_value=25, value=12, step=1, key="rescat_domain_top_n"))
+    if stable_domain_only:
+        st.warning(
+            "Stable domain only is ON. Treat these results as a sensitivity diagnostic, not as the primary prospective domain ranking, because the filter conditions the analysis on knowing that the geological interpretation remained unchanged in the later snapshot."
+        )
 
-    sx, sy, sz, minimum_support_mt, tolerance_pct = panel_settings
+    sx, sy, sz, minimum_support_mt, minimum_later_au_koz, tolerance_pct = panel_settings
     pair = _pair_frame(models, common_index, from_label, to_label)
     metrics = _domain_panel_metrics(
         pair,
@@ -2088,6 +2112,7 @@ def _render_domain_tab(
         sz,
         origin,
         minimum_support_mt,
+        minimum_later_au_koz,
         stable_domain_only,
     )
     if metrics.empty:
@@ -2096,7 +2121,7 @@ def _render_domain_tab(
         summary = _domain_uncertainty_summary(metrics, tolerance_pct)
         st.markdown("#### Classification change by initial geological domain")
         st.caption(
-            f"The geological domain is assigned from the initial snapshot ({from_label}). For each transition, the later category in {to_label} is the benchmark used for bias, WAPE, weighted percentiles and tolerance coverage."
+            f"The geological domain is assigned from the initial snapshot ({from_label}). For each transition, the later category in {to_label} is the benchmark used for bias, WAPE, weighted percentiles and tolerance coverage. Eligible panel-domain cells require at least {minimum_support_mt:g} Mt and {minimum_later_au_koz:g} koz Au in the later category."
         )
         st.markdown(
             f"""
@@ -2194,7 +2219,7 @@ def _render_panel_tab(
     models: dict[str, pd.DataFrame],
     common_index: pd.MultiIndex,
     labels: list[str],
-    panel_settings: tuple[float, float, float, float, float],
+    panel_settings: tuple[float, float, float, float, float, float],
     origin: tuple[float, float, float],
 ) -> None:
     st.subheader("Panel Support")
@@ -2202,7 +2227,7 @@ def _render_panel_tab(
         "Panels are fixed regular spatial support containers; they are not mine-plan panels. "
         "The same XYZ-based geometry is applied to every snapshot, transition and geological domain."
     )
-    sx, sy, sz, minimum_support_mt, tolerance_pct = panel_settings
+    sx, sy, sz, minimum_support_mt, minimum_later_au_koz, tolerance_pct = panel_settings
     reference_label = st.selectbox("Reference snapshot for support distribution", labels, index=0, key="rescat_panel_reference")
     support = _panel_support_distribution(models[reference_label], common_index, sx, sy, sz, origin)
 
@@ -2236,8 +2261,83 @@ def _render_panel_tab(
         pair,
         origin,
         minimum_support_mt,
+        minimum_later_au_koz,
         tolerance_pct,
     )
+    if not sensitivity.empty:
+        # Visual sensitivity check: the same transition is followed across a
+        # consistent sequence of panel supports.  Median support is shown in
+        # the x-axis labels so the reader can see both nominal geometry and
+        # the actual material support represented by that geometry.
+        sensitivity_plot = sensitivity.copy()
+        panel_order = list(dict.fromkeys(sensitivity_plot["Panel geometry"].astype(str).tolist()))
+        support_lookup = (
+            sensitivity_plot[["Panel geometry", "Median support (Mt)"]]
+            .drop_duplicates(subset=["Panel geometry"])
+            .set_index("Panel geometry")["Median support (Mt)"]
+            .to_dict()
+        )
+        ticktext = [
+            f"{geom}<br><span style='font-size:11px'>Median {support_lookup.get(geom, np.nan):.2f} Mt</span>"
+            for geom in panel_order
+        ]
+
+        fig_sensitivity = go.Figure()
+        for transition, _, _ in RELIABILITY_TRANSITIONS:
+            subset = sensitivity_plot[sensitivity_plot["Transition"] == transition].copy()
+            if subset.empty:
+                continue
+            subset["Panel geometry"] = pd.Categorical(subset["Panel geometry"], categories=panel_order, ordered=True)
+            subset = subset.sort_values("Panel geometry")
+            fig_sensitivity.add_trace(
+                go.Scatter(
+                    x=subset["Panel geometry"].astype(str),
+                    y=subset["Au oz WAPE (%)"],
+                    mode="lines+markers+text",
+                    name=transition,
+                    line=dict(color=TRANSITION_COLORS.get(transition, BARRICK_GRAY), width=3),
+                    marker=dict(color=TRANSITION_COLORS.get(transition, BARRICK_GRAY), size=8),
+                    text=[f"{value:.1f}%" for value in subset["Au oz WAPE (%)"]],
+                    textposition="top center",
+                    textfont=dict(size=11, color=TRANSITION_COLORS.get(transition, BARRICK_DARK)),
+                    hovertemplate=(
+                        "Transition: %{fullData.name}<br>"
+                        "Panel: %{x}<br>"
+                        "Au-oz WAPE: %{y:.1f}%<extra></extra>"
+                    ),
+                )
+            )
+
+        _apply_barrick_layout(
+            fig_sensitivity,
+            height=520,
+            title="Support sensitivity — Au-content WAPE by transition",
+            xaxis_title="Panel geometry and median support",
+            yaxis_title="Au oz WAPE (%)",
+            legend_title="Transition",
+        )
+        fig_sensitivity.update_xaxes(
+            categoryorder="array",
+            categoryarray=panel_order,
+            tickmode="array",
+            tickvals=panel_order,
+            ticktext=ticktext,
+            tickangle=-18,
+        )
+        # The ±tolerance is shown only as a contextual reference for the WAPE
+        # magnitude; it is not the same statistic as 'Later Au oz within ±T'.
+        fig_sensitivity.add_hline(
+            y=tolerance_pct,
+            line_width=1.2,
+            line_dash="dot",
+            line_color=BARRICK_GRAY,
+            annotation_text=f"Reference {tolerance_pct:g}%",
+            annotation_position="top left",
+            annotation_font=dict(size=11, color=BARRICK_DARK),
+        )
+        fig_sensitivity.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0))
+        st.plotly_chart(fig_sensitivity, use_container_width=True)
+
     st.dataframe(
         sensitivity.style.format({
             "Median support (Mt)": "{:,.2f}",
@@ -2255,7 +2355,7 @@ def _render_panel_tab(
     )
     st.markdown(
         """
-        <div class="rescat-note"><b>Interpretation:</b> support sensitivity tests whether the estimated change for I → M, M → GC and I → GC is robust to a reasonable range of fixed panel sizes. If a conclusion disappears when panel size changes slightly, it should not be treated as a stable property of the classification system or geological domain.</div>
+        <div class="rescat-note"><b>Interpretation:</b> support sensitivity tests whether the estimated change for I → M, M → GC and I → GC is robust to a reasonable range of fixed panel sizes. The current minimum later-support filters are applied consistently at every geometry. If a conclusion disappears when panel size changes slightly, it should not be treated as a stable property of the classification system or geological domain.</div>
         """,
         unsafe_allow_html=True,
     )
@@ -2266,7 +2366,7 @@ def _build_rescat_report_package(
     common_index: pd.MultiIndex,
     labels: list[str],
     inventory: pd.DataFrame,
-    panel_settings: tuple[float, float, float, float, float],
+    panel_settings: tuple[float, float, float, float, float, float],
     origin: tuple[float, float, float],
     mapping: dict[str, str | None],
 ) -> dict[str, Any]:
@@ -2274,7 +2374,7 @@ def _build_rescat_report_package(
     if len(labels) < 2:
         return {}
 
-    sx, sy, sz, minimum_support_mt, tolerance_pct = panel_settings
+    sx, sy, sz, minimum_support_mt, minimum_later_au_koz, tolerance_pct = panel_settings
     initial_label, later_label = labels[0], labels[-1]
     pair = _pair_frame(models, common_index, initial_label, later_label)
     volume, pct = _transition_tables(pair, RESCAT_FOCUS_ORDER, "volume_from")
@@ -2289,6 +2389,7 @@ def _build_rescat_report_package(
             {"Parameter": "Category source", "Value": "CATEG_GC"},
             {"Parameter": "Panel geometry", "Value": f"{sx:g}×{sy:g}×{sz:g} m"},
             {"Parameter": "Minimum later support/cell", "Value": f"{minimum_support_mt:g} Mt"},
+            {"Parameter": "Minimum later Au/cell", "Value": f"{minimum_later_au_koz:g} koz"},
             {"Parameter": "Reference tolerance", "Value": f"±{tolerance_pct:g}%"},
         ]
     )
@@ -2389,7 +2490,7 @@ def _build_rescat_report_package(
                 }
             )
 
-        panel_metrics = _panel_cohort_metrics(pair, sx, sy, sz, origin, minimum_support_mt)
+        panel_metrics = _panel_cohort_metrics(pair, sx, sy, sz, origin, minimum_support_mt, minimum_later_au_koz)
         uncertainty = _uncertainty_summary(panel_metrics, tolerance_pct)
         if not uncertainty.empty:
             tables.append(
@@ -2398,8 +2499,10 @@ def _build_rescat_report_package(
                     "table": uncertainty,
                     "notes": [
                         f"Fixed panel geometry: {sx:g}×{sy:g}×{sz:g} m.",
+                        f"Minimum later support: {minimum_support_mt:g} Mt and {minimum_later_au_koz:g} koz Au per panel/transition cell.",
                         f"Reference tolerance: ±{tolerance_pct:g}%.",
-                        "Weighted percentiles and tolerance coverage use Au ounces in the later category as weights.",
+                        "Weighted percentiles use the cumulative empirical distribution of Au ounces in the later category; no interpolation is performed across panel cells.",
+                        "Tolerance coverage uses Au ounces in the later category as weights.",
                         "Unweighted P90 values are retained as diagnostics only because every panel cell receives equal statistical weight regardless of support.",
                     ],
                 }
@@ -2422,7 +2525,7 @@ def _build_rescat_report_package(
         for domain_label, domain in (("Mettype", "mettype"), ("Lithology", "lithology"), ("Alteration", "alteration")):
             if not mapping.get(domain):
                 continue
-            metrics = _domain_panel_metrics(pair, domain, sx, sy, sz, origin, minimum_support_mt, False)
+            metrics = _domain_panel_metrics(pair, domain, sx, sy, sz, origin, minimum_support_mt, minimum_later_au_koz, False)
             summary = _domain_uncertainty_summary(metrics, tolerance_pct)
             if not summary.empty:
                 domain_summaries[domain_label] = summary
@@ -2434,6 +2537,7 @@ def _build_rescat_report_package(
                             f"{domain_label} is assigned from the initial snapshot.",
                             "I → M, M → GC and I → GC are reported independently; the later category is the benchmark for each path.",
                             "Domain subvolumes retain their actual support; equal domain volumes are not imposed.",
+                            f"Panel-domain cells require at least {minimum_support_mt:g} Mt and {minimum_later_au_koz:g} koz Au in the later category.",
                         ],
                     }
                 )
@@ -2449,13 +2553,16 @@ def _build_rescat_report_package(
                 )
 
         support = _panel_support_distribution(models[initial_label], common_index, sx, sy, sz, origin)
-        sensitivity = _support_sensitivity_table(models, common_index, initial_label, pair, origin, minimum_support_mt, tolerance_pct)
+        sensitivity = _support_sensitivity_table(models, common_index, initial_label, pair, origin, minimum_support_mt, minimum_later_au_koz, tolerance_pct)
         if not sensitivity.empty:
             tables.append(
                 {
                     "title": "Panel Support - Sensitivity by Transition",
                     "table": sensitivity,
-                    "notes": ["Support sensitivity checks I → M, M → GC and I → GC across the same reasonable fixed panel sizes."],
+                    "notes": [
+                        "Support sensitivity checks I → M, M → GC and I → GC across the same reasonable fixed panel sizes.",
+                        f"The same minimum later support filters ({minimum_support_mt:g} Mt and {minimum_later_au_koz:g} koz Au per cell) are applied to every tested geometry.",
+                    ],
                 }
             )
 
@@ -2468,6 +2575,7 @@ def _build_rescat_report_package(
         "panel_geometry": f"{sx:g}×{sy:g}×{sz:g} m",
         "tolerance_pct": float(tolerance_pct),
         "minimum_support_mt": float(minimum_support_mt),
+        "minimum_later_au_koz": float(minimum_later_au_koz),
         "tables": tables,
         "chart_data": {
             "evolution": evolution,
@@ -2476,6 +2584,7 @@ def _build_rescat_report_package(
             "consecutive": consecutive,
             "uncertainty": uncertainty,
             "panel_support": support,
+            "support_sensitivity": sensitivity,
             "domain_summaries": domain_summaries,
             "domain_stability": domain_stability,
         },
@@ -2545,7 +2654,7 @@ def render_rescat_stability() -> None:
             )
         )
         st.markdown("#### Fixed spatial support")
-        p1, p2, p3, p4, p5 = st.columns(5)
+        p1, p2, p3, p4, p5, p6 = st.columns(6)
         sx = float(p1.number_input("Panel X (m)", min_value=10.0, value=200.0, step=10.0, key="rescat_panel_x"))
         sy = float(p2.number_input("Panel Y (m)", min_value=10.0, value=200.0, step=10.0, key="rescat_panel_y"))
         sz = float(p3.number_input("Panel Z (m)", min_value=10.0, value=30.0, step=10.0, key="rescat_panel_z"))
@@ -2559,8 +2668,18 @@ def render_rescat_stability() -> None:
                 help="Minimum tonnage in the later/better-informed state required for a panel or panel-domain cell to enter uncertainty statistics. Use 0 to retain every occupied cell.",
             )
         )
-        tolerance_pct = float(
+        minimum_later_au_koz = float(
             p5.number_input(
+                "Min later Au/cell (koz)",
+                min_value=0.0,
+                value=0.0,
+                step=0.1,
+                key="rescat_min_later_au_koz",
+                help="Minimum Au content in the later/better-informed state required for a panel or panel-domain cell to enter Au reliability statistics. Use 0 to retain every occupied cell. This control is useful for preventing very low-metal denominators from dominating percentage-bias diagnostics.",
+            )
+        )
+        tolerance_pct = float(
+            p6.number_input(
                 "Reference tolerance (±%)",
                 min_value=1.0,
                 max_value=100.0,
@@ -2618,7 +2737,7 @@ def render_rescat_stability() -> None:
         float(pd.to_numeric(reference["y"], errors="coerce").min()),
         float(pd.to_numeric(reference["z"], errors="coerce").min()),
     )
-    panel_settings = (sx, sy, sz, minimum_support_mt, tolerance_pct)
+    panel_settings = (sx, sy, sz, minimum_support_mt, minimum_later_au_koz, tolerance_pct)
 
     try:
         st.session_state["rescat_report_package"] = _build_rescat_report_package(
